@@ -233,6 +233,7 @@ import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.KeyguardUserSwitcherController;
 import com.android.systemui.statusbar.policy.KeyguardUserSwitcherView;
 import com.android.systemui.statusbar.policy.SplitShadeStateController;
+import com.android.systemui.tuner.TunerService;
 import com.android.systemui.unfold.SysUIUnfoldComponent;
 import com.android.systemui.util.Compile;
 import com.android.systemui.util.Utils;
@@ -289,6 +290,11 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
     private static final String COUNTER_PANEL_OPEN = "panel_open";
     public static final String COUNTER_PANEL_OPEN_QS = "panel_open_qs";
     private static final String COUNTER_PANEL_OPEN_PEEK = "panel_open_peek";
+    private static final String DOUBLE_TAP_SLEEP_GESTURE =
+            "lineagesystem:" + LineageSettings.System.DOUBLE_TAP_SLEEP_GESTURE;
+     private static final String DOUBLE_TAP_SLEEP_LOCKSCREEN =
+             "system:" + Settings.System.DOUBLE_TAP_SLEEP_LOCKSCREEN;
+
     private static final Rect M_DUMMY_DIRTY_RECT = new Rect(0, 0, 1, 1);
     private static final Rect EMPTY_RECT = new Rect();
     /**
@@ -319,7 +325,6 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
             new ShadeHeadsUpChangedListener();
     private final ConfigurationListener mConfigurationListener = new ConfigurationListener();
     private final SettingsChangeObserver mSettingsChangeObserver;
-    private final ContentObserver mDoubleTapToSleepObserver;
     private final StatusBarStateListener mStatusBarStateListener = new StatusBarStateListener();
     private final NotificationPanelView mView;
     private final VibratorHelper mVibratorHelper;
@@ -371,6 +376,8 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
     private final QuickSettingsControllerImpl mQsController;
     private final NaturalScrollingSettingObserver mNaturalScrollingSettingObserver;
     private final TouchHandler mTouchHandler = new TouchHandler();
+    private final TunerService mTunerService;
+
     private long mDownTime;
     private long mStatusBarLongPressDowntime;
     private boolean mTouchSlopExceededBeforeDown;
@@ -405,6 +412,7 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
     private boolean mAnimateNextPositionUpdate;
     private final ScreenOffAnimationController mScreenOffAnimationController;
     private final UnlockedScreenOffAnimationController mUnlockedScreenOffAnimationController;
+    private final EdgeLightViewController mEdgeLightViewController;
     private TrackingStartedListener mTrackingStartedListener;
     private OpenCloseListener mOpenCloseListener;
     private GestureRecorder mGestureRecorder;
@@ -517,6 +525,8 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
     private final int mDisplayId;
     private boolean mDoubleTapToSleepEnabled;
     private GestureDetector mDoubleTapGesture;
+
+    private boolean mIsLockscreenDoubleTapEnabled;
 
     private final KeyguardIndicationController mKeyguardIndicationController;
     private int mHeadsUpInset;
@@ -773,7 +783,9 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
             NaturalScrollingSettingObserver naturalScrollingSettingObserver,
             MSDLPlayer msdlPlayer,
             BrightnessMirrorShowingInteractor brightnessMirrorShowingInteractor,
-            Context context) {
+            TunerService tunerService,
+            Context context,
+            EdgeLightViewController edgeLightViewController) {
         SceneContainerFlag.assertInLegacyMode();
         keyguardStateController.addCallback(new KeyguardStateController.Callback() {
             @Override
@@ -879,6 +891,7 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
                 mSplitShadeStateController.shouldUseSplitNotificationShade(mResources);
         mView.setWillNotDraw(!DEBUG_DRAWABLE);
         mShadeHeaderController = shadeHeaderController;
+        mTunerService = tunerService;
         mLayoutInflater = layoutInflater;
         mFeatureFlags = featureFlags;
         mAnimateBack = predictiveBackAnimateShade();
@@ -927,15 +940,6 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
                 return true;
             }
         });
-        mDoubleTapToSleepObserver = new ContentObserver(handler) {
-            @Override
-            public void onChange(boolean selfChange) {
-                mDoubleTapToSleepEnabled = LineageSettings.System.getInt(mContentResolver,
-                        LineageSettings.System.DOUBLE_TAP_SLEEP_GESTURE,
-                        mResources.getBoolean(org.lineageos.platform.internal.R.bool.
-                                config_dt2sGestureEnabledByDefault) ? 1 : 0) != 0;
-            }
-        };
         mConversationNotificationManager = conversationNotificationManager;
         mAuthController = authController;
         mLockIconViewController = lockIconViewController;
@@ -943,6 +947,7 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
         mUnlockedScreenOffAnimationController = unlockedScreenOffAnimationController;
         mLastDownEvents = new NPVCDownEventState.Buffer(MAX_DOWN_EVENT_BUFFER_SIZE);
         mDeviceEntryFaceAuthInteractor = deviceEntryFaceAuthInteractor;
+        mEdgeLightViewController = edgeLightViewController;
 
         int currentMode = navigationModeController.addListener(
                 mode -> mIsGestureNavigation = QuickStepContract.isGesturalMode(mode));
@@ -1084,6 +1089,8 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
 
         mNotificationContainerParent = mView.findViewById(R.id.notification_container_parent);
         updateViewControllers(userAvatarContainer, keyguardUserSwitcherView);
+
+        mEdgeLightViewController.setEdgeLightView(mView.findViewById(R.id.edge_light_container));
 
         mNotificationStackScrollLayoutController.setOnHeightChangedListener(
                 new NsslHeightChangedListener());
@@ -1738,7 +1745,7 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
 
     @ClockSize
     private int computeDesiredClockSizeForSingleShade() {
-        if (hasVisibleNotifications()) {
+        if (hasVisibleNotifications(true)) {
             return SMALL;
         }
         return LARGE;
@@ -1748,7 +1755,8 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
     private int computeDesiredClockSizeForSplitShade() {
         // Media is not visible to the user on AOD.
         boolean isMediaVisibleToUser =
-                mMediaDataManager.hasActiveMediaOrRecommendation() && !isOnAod();
+                mMediaDataManager.hasActiveMediaOrRecommendation() && !isOnAod()
+                && mMediaHierarchyManager.getShouldShowOnLockScreen();
         if (isMediaVisibleToUser) {
             // When media is visible, it overlaps with the large clock. Use small clock instead.
             return SMALL;
@@ -1828,13 +1836,22 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
 
 
     private boolean hasVisibleNotifications() {
+        return hasVisibleNotifications(false);
+    }
+
+    private boolean hasVisibleNotifications(boolean onKeyguard) {
+        final boolean mediaOnKeyguard = !isOnAod()
+                && mMediaHierarchyManager.getShouldShowOnLockScreen();
+        final boolean isMediaVisibleToUser =
+                mMediaDataManager.hasActiveMediaOrRecommendation()
+                && (mediaOnKeyguard || !onKeyguard);
         if (FooterViewRefactor.isEnabled()) {
             return mActiveNotificationsInteractor.getAreAnyNotificationsPresentValue()
-                    || mMediaDataManager.hasActiveMediaOrRecommendation();
+                    || isMediaVisibleToUser;
         } else {
             return mNotificationStackScrollLayoutController
                     .getVisibleNotificationCount() != 0
-                    || mMediaDataManager.hasActiveMediaOrRecommendation();
+                    || isMediaVisibleToUser;
         }
     }
 
@@ -3932,7 +3949,8 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
         return !isDirectionUpwards(x, y);
     }
 
-    private void fling(float vel, boolean expand, boolean expandBecauseOfFalsing) {
+    @Override
+    public void fling(float vel, boolean expand, boolean expandBecauseOfFalsing) {
         fling(vel, expand, 1.0f /* collapseSpeedUpFactor */, expandBecauseOfFalsing);
     }
 
@@ -4698,7 +4716,8 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
         positionClockAndNotifications(true /* forceUpdate */);
     }
 
-    private final class ShadeAttachStateChangeListener implements View.OnAttachStateChangeListener {
+    private final class ShadeAttachStateChangeListener implements View.OnAttachStateChangeListener,
+            TunerService.Tunable {
         @Override
         public void onViewAttachedToWindow(View v) {
             mFragmentService.getFragmentHostManager(mView)
@@ -4709,10 +4728,8 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
                 mStatusBarStateListener.onStateChanged(mStatusBarStateController.getState(), true);
             }
             mConfigurationController.addCallback(mConfigurationListener);
-            mContentResolver.registerContentObserver(LineageSettings.System.getUriFor(
-                    LineageSettings.System.DOUBLE_TAP_SLEEP_GESTURE), false,
-                    mDoubleTapToSleepObserver);
-            mDoubleTapToSleepObserver.onChange(true);
+            mTunerService.addTunable(this, DOUBLE_TAP_SLEEP_GESTURE);
+            mTunerService.addTunable(this, DOUBLE_TAP_SLEEP_LOCKSCREEN);
             // Theme might have changed between inflating this view and attaching it to the
             // window, so
             // force a call to onThemeChanged
@@ -4724,13 +4741,33 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
 
         @Override
         public void onViewDetachedFromWindow(View v) {
-            mContentResolver.unregisterContentObserver(mDoubleTapToSleepObserver);
             mContentResolver.unregisterContentObserver(mSettingsChangeObserver);
             mFragmentService.getFragmentHostManager(mView)
                     .removeTagListener(QS.TAG, mQsController.getQsFragmentListener());
             mStatusBarStateController.removeCallback(mStatusBarStateListener);
             mConfigurationController.removeCallback(mConfigurationListener);
+            mTunerService.removeTunable(this);
             mFalsingManager.removeTapListener(mFalsingTapListener);
+        }
+
+        @Override
+        public void onTuningChanged(String key, String newValue) {
+            switch (key) {
+                case DOUBLE_TAP_SLEEP_GESTURE:
+                    mDoubleTapToSleepEnabled =
+                            TunerService.parseIntegerSwitch(newValue,
+                                mResources.getBoolean(org.lineageos.platform.internal.R.bool.
+                                config_dt2sGestureEnabledByDefault));
+                    break;
+                case DOUBLE_TAP_SLEEP_LOCKSCREEN:
+                    mIsLockscreenDoubleTapEnabled =
+                            TunerService.parseIntegerSwitch(newValue,
+                                mResources.getBoolean(org.lineageos.platform.internal.R.bool.
+                                config_dt2sGestureEnabledByDefault));
+                    break;
+                default:
+                    break;
+            }
         }
     }
 
@@ -5109,7 +5146,10 @@ public final class NotificationPanelViewController implements ShadeSurface, Dump
                 return false;
             }
 
-            if (mDoubleTapToSleepEnabled && !mPulsing && !mDozing) {
+            if ((mIsLockscreenDoubleTapEnabled && !mPulsing && !mDozing
+                    && mBarState == StatusBarState.KEYGUARD) ||
+                    (!mQsController.getExpanded() && mDoubleTapToSleepEnabled
+                    && event.getY() < mStatusBarHeaderHeightKeyguard)) {
                 mDoubleTapGesture.onTouchEvent(event);
             }
 

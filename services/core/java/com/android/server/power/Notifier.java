@@ -128,6 +128,8 @@ public class Notifier {
                     -1);
     private static final VibrationAttributes HARDWARE_FEEDBACK_VIBRATION_ATTRIBUTES =
             VibrationAttributes.createForUsage(VibrationAttributes.USAGE_HARDWARE_FEEDBACK);
+    private static final VibrationEffect CHARGING_VIBRATION_DOUBLE_CLICK_EFFECT =
+            VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK);
 
     private final Object mLock = new Object();
 
@@ -157,10 +159,6 @@ public class Notifier {
 
     // True if the device should suspend when the screen is off due to proximity.
     private final boolean mSuspendWhenScreenOffDueToProximityConfig;
-
-    // True if the device should show the wireless charging animation when the device
-    // begins charging wirelessly
-    private final boolean mShowWirelessChargingAnimationConfig;
 
     // Encapsulates interactivity information about a particular display group.
     private static class Interactivity {
@@ -242,8 +240,6 @@ public class Notifier {
 
         mSuspendWhenScreenOffDueToProximityConfig = context.getResources().getBoolean(
                 com.android.internal.R.bool.config_suspendWhenScreenOffDueToProximity);
-        mShowWirelessChargingAnimationConfig = context.getResources().getBoolean(
-                com.android.internal.R.bool.config_showBuiltinWirelessChargingAnim);
 
         mWakeLockLog = mInjector.getWakeLockLog(context);
         // Initialize interactive state for battery stats.
@@ -907,7 +903,7 @@ public class Notifier {
     /**
      * Called when wired charging has started - to provide user feedback
      */
-    public void onWiredChargingStarted(@UserIdInt int userId) {
+    public void onWiredChargingStarted(int batteryLevel, @UserIdInt int userId) {
         if (DEBUG) {
             Slog.d(TAG, "onWiredChargingStarted");
         }
@@ -915,7 +911,8 @@ public class Notifier {
         mSuspendBlocker.acquire();
         Message msg = mHandler.obtainMessage(MSG_WIRED_CHARGING_STARTED);
         msg.setAsynchronous(true);
-        msg.arg1 = userId;
+        msg.arg1 = batteryLevel;
+        msg.arg2 = userId;
         mHandler.sendMessage(msg);
     }
 
@@ -1113,9 +1110,6 @@ public class Notifier {
     };
 
     private void playChargingStartedFeedback(@UserIdInt int userId, boolean wireless) {
-        if (!isChargingFeedbackEnabled(userId)) {
-            return;
-        }
 
         if (!mIsPlayingChargingStartedFeedback.compareAndSet(false, true)) {
             // there's already a charging started feedback Runnable scheduled to run on the
@@ -1130,10 +1124,12 @@ public class Notifier {
                     Settings.Secure.CHARGING_VIBRATION_ENABLED, 1, userId) != 0;
             if (vibrate) {
                 mVibrator.vibrate(Process.SYSTEM_UID, mContext.getOpPackageName(),
-                        CHARGING_VIBRATION_EFFECT, /* reason= */ "Charging started",
+                        mVibrator.hasAmplitudeControl() ? CHARGING_VIBRATION_EFFECT :
+                        CHARGING_VIBRATION_DOUBLE_CLICK_EFFECT, /* reason= */ "Charging started",
                         HARDWARE_FEEDBACK_VIBRATION_ATTRIBUTES);
             }
 
+        if (isChargingFeedbackEnabled(userId)) {
             // play sound
             final String soundPath = Settings.Global.getString(mContext.getContentResolver(),
                     wireless ? Settings.Global.WIRELESS_CHARGING_STARTED_SOUND
@@ -1153,23 +1149,35 @@ public class Notifier {
                     sfx.play();
                 }
             }
+        }
             mIsPlayingChargingStartedFeedback.set(false);
         });
     }
 
     private void showWirelessChargingStarted(int batteryLevel, @UserIdInt int userId) {
+        final boolean animationEnabled = Settings.System.getIntForUser(mContext.getContentResolver(),
+                Settings.System.CHARGING_ANIMATION, 1, userId) == 1;
+
         // play sounds + haptics
         playChargingStartedFeedback(userId, true /* wireless */);
 
         // show animation
-        if (mShowWirelessChargingAnimationConfig && mStatusBarManagerInternal != null) {
+        if (animationEnabled && mStatusBarManagerInternal != null) {
             mStatusBarManagerInternal.showChargingAnimation(batteryLevel);
         }
         mSuspendBlocker.release();
     }
 
-    private void showWiredChargingStarted(@UserIdInt int userId) {
+    private void showWiredChargingStarted(int batteryLevel, @UserIdInt int userId) {
+        final boolean animationEnabled = Settings.System.getIntForUser(mContext.getContentResolver(),
+                Settings.System.CHARGING_ANIMATION, 1, userId) == 1;
+
         playChargingStartedFeedback(userId, false /* wireless */);
+
+        // show animation
+        if (animationEnabled && mStatusBarManagerInternal != null) {
+            mStatusBarManagerInternal.showChargingAnimation(batteryLevel);
+        }
         mSuspendBlocker.release();
     }
 
@@ -1324,7 +1332,7 @@ public class Notifier {
                     showChargingStopped(msg.arg1, false /* wireless */);
                     break;
                 case MSG_WIRED_CHARGING_STARTED:
-                    showWiredChargingStarted(msg.arg1);
+                    showWiredChargingStarted(msg.arg1, msg.arg2);
                     break;
                 case MSG_SCREEN_POLICY:
                     screenPolicyChanging(msg.arg1, msg.arg2);

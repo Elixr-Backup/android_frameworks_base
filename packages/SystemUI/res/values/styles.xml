@@ -163,10 +163,12 @@
         <item name="android:letterSpacing">0.01</item>
     </style>
 
-    <style name="TextAppearance.QS.Status.Carriers" />
+    <style name="TextAppearance.QS.Status.Carriers">
+        <item name="android:textColor">?android:attr/textColorPrimary</item>
+    </style>
 
     <style name="TextAppearance.QS.Status.Carriers.NoCarrierText">
-        <item name="android:textColor">?attr/onSurfaceVariant</item>
+        <item name="android:textColor">?android:attr/textColorPrimary</item>
     </style>
 
     <style name="TextAppearance.QS.Status.Build">
@@ -481,11 +483,11 @@
         <item name="containerStyle">@style/AuthNonBioCredentialPinPasswordContainerStyle</item>
     </style>
 
-    <style name="Theme.SystemUI.QuickSettings" parent="@*android:style/Theme.DeviceDefault">
+    <style name="Theme.SystemUI.QuickSettings" parent="@*android:style/Theme.DeviceDefault.SystemUI">
         <item name="isQsTheme">true</item>
         <item name="lightIconTheme">@style/QSIconTheme</item>
         <item name="darkIconTheme">@style/QSIconTheme</item>
-        <item name="android:colorError">@*android:color/error_color_material_dark</item>
+        <item name="android:colorError">@*android:color/error_color_material_light</item>
         <item name="android:windowIsFloating">true</item>
         <item name="android:homeAsUpIndicator">@drawable/ic_arrow_back</item>
 
@@ -497,15 +499,14 @@
         <item name="onSurface">?androidprv:attr/materialColorOnSurface</item>
         <item name="onSurfaceVariant">?androidprv:attr/materialColorOnSurfaceVariant</item>
         <item name="outline">?androidprv:attr/materialColorOutline</item>
-
-        <item name="shadeActive">?androidprv:attr/customColorShadeActive</item>
-        <item name="onShadeActive">?androidprv:attr/customColorOnShadeActive</item>
-        <item name="onShadeActiveVariant">?androidprv:attr/customColorOnShadeActiveVariant</item>
-        <item name="shadeInactive">?androidprv:attr/customColorShadeInactive</item>
-        <item name="onShadeInactive">?androidprv:attr/customColorOnShadeInactive</item>
-        <item name="onShadeInactiveVariant">?androidprv:attr/customColorOnShadeInactiveVariant</item>
-        <item name="shadeDisabled">?androidprv:attr/customColorShadeDisabled</item>
-        <item name="underSurface">?androidprv:attr/customColorUnderSurface</item>
+        <item name="shadeActive">@color/material_dynamic_primary30</item>
+        <item name="onShadeActive">@color/material_dynamic_primary100</item>
+        <item name="onShadeActiveVariant">@color/material_dynamic_primary80</item>
+        <item name="shadeInactive">@color/material_dynamic_neutral80</item>
+        <item name="onShadeInactive">@color/material_dynamic_neutral20</item>
+        <item name="onShadeInactiveVariant">@color/material_dynamic_neutral_variant30</item>
+        <item name="shadeDisabled">@color/shade_disabled</item>
+        <item name="underSurface">@color/material_dynamic_neutral90</item>
         <item name="android:itemTextAppearance">@style/Control.MenuItem</item>
     </style>
 
@@ -567,7 +568,7 @@
         <item name="android:buttonBarPositiveButtonStyle">@style/Widget.Dialog.Button</item>
         <item name="android:buttonBarNegativeButtonStyle">@style/Widget.Dialog.Button.BorderButton</item>
         <item name="android:buttonBarNeutralButtonStyle">@style/Widget.Dialog.Button.BorderButton</item>
-        <item name="android:colorBackground">?androidprv:attr/materialColorSurfaceBright</item>
+        <item name="android:colorBackground">@color/notification_divider_color</item>
         <item name="android:alertDialogStyle">@style/ScrollableAlertDialogStyle</item>
         <item name="android:buttonBarStyle">@style/ButtonBarStyle</item>
         <item name="android:buttonBarButtonStyle">@style/Widget.Dialog.Button.Large</item>
@@ -614,6 +615,8 @@
         <!-- of ActionsDialogLite relies on this to be null (resource=0) to detect when to run -->
         <!-- the in-window animation. -->
         <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowBlurBehindEnabled">true</item>
+        <item name="android:windowBlurBehindRadius">@dimen/max_window_blur_radius</item>
     </style>
 
     <style name="QSBorderlessButton">
@@ -817,7 +820,7 @@
 
     <style name="QSCustomizeToolbar" parent="@*android:style/Widget.DeviceDefault.Toolbar">
         <item name="android:textColor">?attr/onSurface</item>
-        <item name="android:elevation">10dp</item>
+        <item name="android:elevation">0dp</item>
     </style>
 
     <!-- Media controls always have light background -->
@@ -830,6 +833,7 @@
         <item name="android:thumb">@drawable/media_seekbar_thumb</item>
         <item name="android:thumbTint">?android:attr/textColorPrimary</item>
         <item name="android:progressDrawable">@drawable/media_squiggly_progress</item>
+        <item name="android:thumb">@*android:drawable/seekbar_thumb_material_anim</item>
         <item name="android:progressTint">?android:attr/textColorPrimary</item>
         <item name="android:progressBackgroundTint">?android:attr/textColorTertiary</item>
         <item name="android:splitTrack">false</item>
@@ -945,14 +949,9 @@
     <!-- Used to style charging animation AVD animation -->
     <style name="ChargingAnim" />
 
-    <style name="ChargingAnim.WallpaperBackground">
-        <item name="chargingAnimColor">?attr/wallpaperTextColor</item>
-        <item name="android:textColor">?attr/wallpaperTextColor</item>
-    </style>
-
-    <style name="ChargingAnim.DarkBackground">
-        <item name="chargingAnimColor">@android:color/white</item>
-        <item name="android:textColor">@android:color/white</item>
+    <style name="ChargingAnim.Background">
+        <item name="chargingAnimColor">@*android:color/system_accent1_100</item>
+        <item name="android:textColor">@*android:color/system_accent1_100</item>
     </style>
 
     <!-- Screen recording -->
@@ -1641,13 +1640,13 @@
     <style name="TextAppearance.MagnificationSetting" />
 
     <style name="TextAppearance.MagnificationSetting.Title">
-        <item name="android:fontFamily">google-sans</item>
+        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
         <item name="android:textColor">?androidprv:attr/textColorPrimary</item>
         <item name="android:textSize">@dimen/magnification_setting_text_size</item>
     </style>
 
     <style name="TextAppearance.MagnificationSetting.EditButton">
-        <item name="android:fontFamily">google-sans</item>
+        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
         <item name="android:textColor">?androidprv:attr/colorAccent</item>
         <item name="android:textSize">@dimen/magnification_setting_text_size</item>
         <item name="android:lineHeight">@dimen/magnification_setting_button_line_height</item>
@@ -1655,7 +1654,7 @@
     </style>
 
     <style name="TextAppearance.MagnificationSetting.DoneButton">
-        <item name="android:fontFamily">google-sans</item>
+        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
         <item name="android:textColor">?androidprv:attr/textColorPrimary</item>
         <item name="android:textSize">@dimen/magnification_setting_text_size</item>
         <item name="android:lineHeight">@dimen/magnification_setting_button_line_height</item>

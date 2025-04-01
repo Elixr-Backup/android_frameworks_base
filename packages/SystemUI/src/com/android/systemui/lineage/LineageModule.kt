@@ -21,12 +21,21 @@ import com.android.systemui.qs.tiles.AmbientDisplayTile
 import com.android.systemui.qs.tiles.AODTile
 import com.android.systemui.qs.tiles.CaffeineTile
 import com.android.systemui.qs.tiles.CellularTile
+import com.android.systemui.qs.tiles.CompassTile
+import com.android.systemui.qs.tiles.DataSwitchTile
 import com.android.systemui.qs.tiles.HeadsUpTile
+import com.android.systemui.qs.tiles.LocaleTile
+import com.android.systemui.qs.tiles.OnTheGoTile
 import com.android.systemui.qs.tiles.PowerShareTile
+import com.android.systemui.qs.tiles.PreferredNetworkTile
 import com.android.systemui.qs.tiles.ProfilesTile
 import com.android.systemui.qs.tiles.ReadingModeTile
+import com.android.systemui.qs.tiles.RefreshRateTile
+import com.android.systemui.qs.tiles.ScreenshotTile
+import com.android.systemui.qs.tiles.SoundTile
 import com.android.systemui.qs.tiles.SyncTile
 import com.android.systemui.qs.tiles.UsbTetherTile
+import com.android.systemui.qs.tiles.VolumeTile
 import com.android.systemui.qs.tiles.VpnTile
 import com.android.systemui.qs.tiles.WifiTile
 
@@ -61,17 +70,47 @@ interface LineageModule {
     @StringKey(CellularTile.TILE_SPEC)
     fun bindCellularTile(cellularTile: CellularTile): QSTileImpl<*>
 
+    /** Inject CompassTile into tileMap in QSModule */
+    @Binds
+    @IntoMap
+    @StringKey(CompassTile.TILE_SPEC)
+    fun bindCompassTile(compassTile: CompassTile): QSTileImpl<*>
+
+    /** Inject DataSwitchTile into tileMap in QSModule */
+    @Binds
+    @IntoMap
+    @StringKey(DataSwitchTile.TILE_SPEC)
+    fun bindDataSwitchTile(dataSwitchTile: DataSwitchTile): QSTileImpl<*>
+
     /** Inject HeadsUpTile into tileMap in QSModule */
     @Binds
     @IntoMap
     @StringKey(HeadsUpTile.TILE_SPEC)
     fun bindHeadsUpTile(headsUpTile: HeadsUpTile): QSTileImpl<*>
 
+    /** Inject LocaleTile into tileMap in QSModule */
+    @Binds
+    @IntoMap
+    @StringKey(LocaleTile.TILE_SPEC)
+    fun bindLocaleTile(localeTile: LocaleTile): QSTileImpl<*>
+
+    /** Inject OnTheGoTile into tileMap in QSModule */
+    @Binds
+    @IntoMap
+    @StringKey(OnTheGoTile.TILE_SPEC)
+    fun bindOnTheGoTile(onTheGoTile: OnTheGoTile): QSTileImpl<*>
+
     /** Inject PowerShareTile into tileMap in QSModule */
     @Binds
     @IntoMap
     @StringKey(PowerShareTile.TILE_SPEC)
     fun bindPowerShareTile(powerShareTile: PowerShareTile): QSTileImpl<*>
+
+    /** Inject PreferredNetworkTile into tileMap in QSModule */
+    @Binds
+    @IntoMap
+    @StringKey(PreferredNetworkTile.TILE_SPEC)
+    fun bindPreferredNetworkTile(preferredNetworkTile: PreferredNetworkTile): QSTileImpl<*>
 
     /** Inject ProfilesTile into tileMap in QSModule */
     @Binds
@@ -85,6 +124,24 @@ interface LineageModule {
     @StringKey(ReadingModeTile.TILE_SPEC)
     fun bindReadingModeTile(readingModeTile: ReadingModeTile): QSTileImpl<*>
 
+    /** Inject RefreshRateTile into tileMap in QSModule */
+    @Binds
+    @IntoMap
+    @StringKey(RefreshRateTile.TILE_SPEC)
+    fun bindRefreshRateTile(refreshRateTile: RefreshRateTile): QSTileImpl<*>
+
+    /** Inject ScreenshotTile into tileMap in QSModule */
+    @Binds
+    @IntoMap
+    @StringKey(ScreenshotTile.TILE_SPEC)
+    fun bindScreenshotTile(screenshotTile: ScreenshotTile): QSTileImpl<*>
+
+    /** Inject SoundTile into tileMap in QSModule */
+    @Binds
+    @IntoMap
+    @StringKey(SoundTile.TILE_SPEC)
+    fun bindSoundTile(soundTile: SoundTile): QSTileImpl<*>
+
     /** Inject SyncTile into tileMap in QSModule */
     @Binds
     @IntoMap
@@ -96,6 +153,12 @@ interface LineageModule {
     @IntoMap
     @StringKey(UsbTetherTile.TILE_SPEC)
     fun bindUsbTetherTile(usbTetherTile: UsbTetherTile): QSTileImpl<*>
+
+    /** Inject VolumeTile into tileMap in QSModule */
+    @Binds
+    @IntoMap
+    @StringKey(VolumeTile.TILE_SPEC)
+    fun bindVolumeTile(volumeTile: VolumeTile): QSTileImpl<*>
 
     /** Inject VpnTile into tileMap in QSModule */
     @Binds

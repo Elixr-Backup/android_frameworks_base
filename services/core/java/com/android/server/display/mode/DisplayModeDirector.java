@@ -278,6 +278,7 @@ public class DisplayModeDirector {
         synchronized (mLock) {
             // We may have a listener already registered before the call to start, so go ahead and
             // notify them to pick up our newly initialized state.
+            mSettingsObserver.updateRefreshRateSettingLocked();
             notifyDesiredDisplayModeSpecsChangedLocked();
         }
     }
@@ -974,6 +975,8 @@ public class DisplayModeDirector {
                 Settings.Global.getUriFor(Settings.Global.LOW_POWER_MODE);
         private final Uri mMatchContentFrameRateSetting =
                 Settings.Secure.getUriFor(Settings.Secure.MATCH_CONTENT_FRAME_RATE);
+        private final Uri mLowPowerRefreshRateSetting =
+                Settings.System.getUriFor(Settings.System.LOW_POWER_REFRESH_RATE);
 
         private final boolean mVsyncLowPowerVoteEnabled;
         private final boolean mPeakRefreshRatePhysicalLimitEnabled;
@@ -1045,6 +1048,8 @@ public class DisplayModeDirector {
                     UserHandle.USER_ALL);
             cr.registerContentObserver(mMatchContentFrameRateSetting,
                     /* notifyDescendants= */ false, this, UserHandle.USER_ALL);
+            cr.registerContentObserver(mLowPowerRefreshRateSetting,
+                    /* notifyDescendants= */ false, this, UserHandle.USER_SYSTEM);
             mInjector.registerDisplayListener(mDisplayListener, mHandler);
 
             float deviceConfigDefaultPeakRefresh =
@@ -1085,7 +1090,8 @@ public class DisplayModeDirector {
             synchronized (mLock) {
                 if (mPeakRefreshRateSetting.equals(uri) || mMinRefreshRateSetting.equals(uri)) {
                     updateRefreshRateSettingLocked();
-                } else if (mLowPowerModeSetting.equals(uri)) {
+                } else if (mLowPowerModeSetting.equals(uri)
+                        || mLowPowerRefreshRateSetting.equals(uri)) {
                     updateLowPowerModeSettingLocked();
                 } else if (mMatchContentFrameRateSetting.equals(uri)) {
                     updateModeSwitchingTypeSettingLocked();
@@ -1127,8 +1133,10 @@ public class DisplayModeDirector {
         private void updateLowPowerModeSettingLocked() {
             mIsLowPower = Settings.Global.getInt(mContext.getContentResolver(),
                     Settings.Global.LOW_POWER_MODE, 0 /*default*/) != 0;
+            boolean shouldSwitchRefreshRate = Settings.System.getInt(mContext.getContentResolver(),
+                    Settings.System.LOW_POWER_REFRESH_RATE, 1 /*default*/) != 0;
             final Vote vote;
-            if (mIsLowPower) {
+            if (mIsLowPower && shouldSwitchRefreshRate) {
                 vote = Vote.forRenderFrameRates(0f, 60f);
             } else {
                 vote = null;
@@ -1185,7 +1193,7 @@ public class DisplayModeDirector {
             float highestRefreshRate = getMaxRefreshRateLocked(displayId);
 
             float minRefreshRate = Settings.System.getFloatForUser(cr,
-                    Settings.System.MIN_REFRESH_RATE, 0f, UserHandle.USER_CURRENT);
+                    Settings.System.MIN_REFRESH_RATE, 60f, UserHandle.USER_CURRENT);
             if (Float.isInfinite(minRefreshRate)) {
                 // Infinity means that we want the highest possible refresh rate
                 minRefreshRate = highestRefreshRate;
@@ -1817,6 +1825,7 @@ public class DisplayModeDirector {
         @Nullable
         private SparseArray<RefreshRateRange> mHighZoneRefreshRateForThermals;
         private int mRefreshRateInHighZone;
+        private int mPeakRefreshRate;
 
         @Nullable
         private List<IdleScreenRefreshRateTimeoutLuxThresholdPoint>
@@ -2092,10 +2101,16 @@ public class DisplayModeDirector {
         @VisibleForTesting
         public void onRefreshRateSettingChangedLocked(float min, float max) {
             boolean changeable = (max - min > 1f && max > 60f);
-            if (mRefreshRateChangeable != changeable) {
+            int peakRefreshRate = Math.round(Math.max(min, max));
+            if (mRefreshRateChangeable != changeable || mPeakRefreshRate != peakRefreshRate) {
                 mRefreshRateChangeable = changeable;
-                updateSensorStatus();
-                if (!changeable) {
+                mPeakRefreshRate = peakRefreshRate;
+                if (changeable) {
+                    synchronized (mLock) {
+                        onBrightnessChangedLocked();
+                    }
+                } else {
+                    updateSensorStatus();
                     removeFlickerRefreshRateVotes();
                 }
             }
@@ -2443,6 +2458,7 @@ public class DisplayModeDirector {
                 return;
             }
 
+            int refreshRateInLowZone = Math.min(mPeakRefreshRate, mRefreshRateInLowZone);
             boolean insideLowZone = hasValidLowZone() && isInsideLowZone(mBrightness, mAmbientLux);
             if (insideLowZone) {
                 if (hasLowLightVrrConfig()) {
@@ -2450,7 +2466,7 @@ public class DisplayModeDirector {
                             .getRefreshRateData().lowLightBlockingZoneSupportedModes);
                 } else {
                     refreshRateVote = Vote.forPhysicalRefreshRates(
-                            mRefreshRateInLowZone, mRefreshRateInLowZone);
+                            refreshRateInLowZone, refreshRateInLowZone);
                     refreshRateSwitchingVote = Vote.forDisableRefreshRateSwitching();
                 }
                 if (mLowZoneRefreshRateForThermals != null) {
@@ -2464,12 +2480,12 @@ public class DisplayModeDirector {
                 }
             }
 
+            int refreshRateInHighZone = Math.min(mPeakRefreshRate, mRefreshRateInHighZone);
             boolean insideHighZone = hasValidHighZone()
                     && isInsideHighZone(mBrightness, mAmbientLux);
             if (insideHighZone) {
                 refreshRateVote =
-                        Vote.forPhysicalRefreshRates(mRefreshRateInHighZone,
-                                mRefreshRateInHighZone);
+                        Vote.forPhysicalRefreshRates(refreshRateInHighZone, refreshRateInHighZone);
                 if (mHighZoneRefreshRateForThermals != null) {
                     RefreshRateRange range = SkinThermalStatusObserver
                             .findBestMatchingRefreshRateRange(mThermalStatus,

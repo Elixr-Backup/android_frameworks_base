@@ -17,6 +17,7 @@
 package com.android.settingslib.spa.widget.preference
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,6 +27,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -33,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -70,17 +75,17 @@ internal fun BaseLayout(
                 .thenIf(isSpaExpressiveEnabled && LocalIsInCategory.current) {
                     Modifier.clip(SettingsShape.CornerExtraSmall).background(surfaceBright)
                 }
-                .padding(end = paddingEnd),
+                .padding(end = paddingEnd + 8.dp, start = paddingStart),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val alphaModifier = Modifier.alphaForEnabled(enabled())
-        BaseIcon(icon, alphaModifier, paddingStart)
         Titles(
             title = title,
             titleContentDescription = titleContentDescription,
             subTitle = subTitle,
             modifier = alphaModifier.weight(1f).padding(vertical = paddingVertical),
         )
+        BaseIcon(icon, alphaModifier, paddingStart)
         widget()
     }
 }
@@ -88,11 +93,16 @@ internal fun BaseLayout(
 @Composable
 internal fun BaseIcon(icon: @Composable (() -> Unit)?, modifier: Modifier, paddingStart: Dp) {
     if (icon != null) {
-        Box(
-            modifier = modifier.size(SettingsDimension.itemIconContainerSize),
-            contentAlignment = Alignment.Center,
+        Card(
+            shape = RoundedCornerShape(30.dp),
+            modifier = Modifier.size(width = 40.dp, height = 40.dp),
+            colors = if (isSystemInDarkTheme()) CardDefaults.cardColors(containerColor = colorResource(android.R.color.system_accent2_700)) else CardDefaults.cardColors(containerColor = colorResource(android.R.color.system_accent2_100))
         ) {
-            icon()
+            Column(
+                modifier = Modifier.padding(10.dp).size(24.dp, 24.dp)
+            ) {
+                icon()
+            }
         }
     } else {
         Spacer(modifier = Modifier.width(width = paddingStart))

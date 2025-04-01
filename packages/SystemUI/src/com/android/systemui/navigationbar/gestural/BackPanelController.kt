@@ -160,6 +160,10 @@ constructor(
     private var triggerLongSwipe = false
     private var isLongSwipeEnabled = false
 
+    private var backArrowVisibility = false
+
+    private var edgeHapticEnabled = false
+
     internal enum class GestureState {
         /* Arrow is off the screen and invisible */
         GONE,
@@ -662,10 +666,18 @@ constructor(
         setTriggerLongSwipe(isLongSwipeEnabled && triggerLongSwipe)
     }
 
+    override fun setBackArrowVisibility(enabled: Boolean) {
+        backArrowVisibility = enabled
+    }
+
+    override fun setEdgeHapticEnabled(enabled: Boolean) {
+        edgeHapticEnabled = enabled
+    }
+
     private fun setTriggerLongSwipe(enabled: Boolean) {
         if (triggerLongSwipe != enabled) {
             triggerLongSwipe = enabled
-            vibratorHelper.performHapticFeedback(
+            if (edgeHapticEnabled) vibratorHelper.performHapticFeedback(
                     mView,
                     HapticFeedbackConstants.GESTURE_THRESHOLD_ACTIVATE
             )
@@ -937,7 +949,7 @@ constructor(
                 mView.isVisible = false
             }
             GestureState.ENTRY -> {
-                mView.isVisible = true
+                mView.isVisible = if (backArrowVisibility) true else false
 
                 updateRestingArrowDimens()
                 gestureEntryTime = systemClock.uptimeMillis()
@@ -945,7 +957,7 @@ constructor(
             GestureState.ACTIVE -> {
                 previousXTranslationOnActiveOffset = previousXTranslation
                 updateRestingArrowDimens()
-                performActivatedHapticFeedback()
+                if (edgeHapticEnabled) performActivatedHapticFeedback()
                 val popVelocity =
                     if (previousState == GestureState.INACTIVE) {
                         POP_ON_INACTIVE_TO_ACTIVE_VELOCITY
@@ -966,14 +978,14 @@ constructor(
 
                 mView.popOffEdge(POP_ON_INACTIVE_VELOCITY)
 
-                performDeactivatedHapticFeedback()
+                if (edgeHapticEnabled) performDeactivatedHapticFeedback()
                 updateRestingArrowDimens()
             }
             GestureState.FLUNG -> {
                 // Typically a vibration is only played while transitioning to ACTIVE. However there
                 // are instances where a fling to trigger back occurs while not in that state.
                 // (e.g. A fling is detected before crossing the trigger threshold.)
-                if (previousState != GestureState.ACTIVE) {
+                if (edgeHapticEnabled && (previousState != GestureState.ACTIVE)) {
                     performActivatedHapticFeedback()
                 }
                 mainHandler.postDelayed(POP_ON_FLING_DELAY) {

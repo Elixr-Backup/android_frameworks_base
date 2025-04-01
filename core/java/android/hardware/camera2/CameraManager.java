@@ -32,6 +32,7 @@ import android.annotation.TestApi;
 import android.app.ActivityManager;
 import android.app.CameraCompatTaskInfo;
 import android.app.TaskInfo;
+import android.app.ActivityThread;
 import android.app.compat.CompatChanges;
 import android.companion.virtual.VirtualDeviceManager;
 import android.compat.annotation.ChangeId;
@@ -874,7 +875,20 @@ public final class CameraManager {
                 new HashMap<String, CameraCharacteristics>();
         Set<String> physicalCameraIds = chars.getPhysicalCameraIds();
         for (String physicalCameraId : physicalCameraIds) {
-            CameraCharacteristics physicalChars = getCameraCharacteristics(physicalCameraId);
+            CameraCharacteristics physicalChars;
+            try {
+                physicalChars = getCameraCharacteristics(physicalCameraId);
+            } catch (Exception e) {
+                final String fallbackId = SystemProperties.get(
+                        "persist.sys.camera.fallback_id_" + physicalCameraId);
+                if (fallbackId.isEmpty()) {
+                    throw e;
+                }
+                Log.w(TAG, "Could not retrieve camera " + physicalCameraId + " characteristics", e);
+                Log.i(TAG, "Trying fallback camera " + fallbackId);
+                // if this also fails, exception will be thrown
+                physicalChars = getCameraCharacteristics(fallbackId);
+            }
             physicalIdsToChars.put(physicalCameraId, physicalChars);
         }
         return physicalIdsToChars;
@@ -2487,8 +2501,11 @@ public final class CameraManager {
             try {
                 List<String> cameraIds = new ArrayList<>();
                 boolean exposeAuxCamera = Camera.shouldExposeAuxCamera();
-                for (int i = 0; i < mDeviceStatus.size(); i++) {
-                    if (!exposeAuxCamera && i == 2) break;
+                int size = exposeAuxCamera ? mDeviceStatus.size() : 2;
+                if (mDeviceStatus.size() < size) {
+                    size = mDeviceStatus.size();
+                }
+                for (int i = 0; i < size; i++) {
                     int status = mDeviceStatus.valueAt(i);
                     DeviceCameraInfo info = mDeviceStatus.keyAt(i);
                     if (status == ICameraServiceListener.STATUS_NOT_PRESENT
@@ -2538,6 +2555,12 @@ public final class CameraManager {
         }
 
         private static void sortCameraIds(String[] cameraIds) {
+            // Check if the cameraIds array is null to avoid NullPointerException
+            if (cameraIds == null) {
+                Log.e("CameraManagerGlobal", "Camera ID array is null");
+                return;
+            }
+
             // The sort logic must match the logic in
             // libcameraservice/common/CameraProviderManager.cpp::getAPI1CompatibleCameraDeviceIds
             Arrays.sort(cameraIds, new Comparator<String>() {
@@ -2815,6 +2838,14 @@ public final class CameraManager {
             synchronized (mLock) {
                 if (cameraId == null) {
                     throw new IllegalArgumentException("cameraId was null");
+                }
+
+                /* Force to expose only two cameras
+                 * if the package name does not falls in this bucket
+                 */
+                boolean exposeAuxCamera = Camera.shouldExposeAuxCamera();
+                if (exposeAuxCamera == false && (Integer.parseInt(cameraId) >= 2)) {
+                    throw new IllegalArgumentException("invalid cameraId");
                 }
 
                 ICameraService cameraService = getCameraService();
@@ -3238,6 +3269,15 @@ public final class CameraManager {
                 Log.v(TAG, String.format(
                         "Camera id %s has torch status changed to 0x%x for device %d",
                         info.mCameraId, status, info.mDeviceId));
+            }
+
+            /* Force to ignore the aux or composite camera torch status update
+             * if the package name does not falls in this bucket
+             */
+            boolean exposeAuxCamera = Camera.shouldExposeAuxCamera();
+            if (exposeAuxCamera == false && Integer.parseInt(info.mCameraId) >= 2) {
+                Log.w(TAG, "ignore the torch status update of camera: " + info.mCameraId);
+                return;
             }
 
             if (!validTorchStatus(status)) {

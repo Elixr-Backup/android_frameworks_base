@@ -200,6 +200,7 @@ import android.service.dreams.IDreamManager;
 import android.service.vr.IPersistentVrStateCallbacks;
 import android.speech.RecognizerIntent;
 import android.telecom.TelecomManager;
+import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.Log;
 import android.util.MathUtils;
@@ -504,6 +505,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     private boolean mHasFeatureLeanback;
     private boolean mHasFeatureHdmiCec;
 
+    // Double-tap-to-doze
+    private boolean mDoubleTapToWake;
+    private boolean mDoubleTapToDoze;
+    private boolean mNativeDoubleTapToDozeAvailable;
+
     // Assigned on main thread, accessed on UI thread
     volatile VrManagerInternal mVrManagerInternal;
 
@@ -698,6 +704,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     private Action mAppSwitchPressAction;
     private Action mAppSwitchLongPressAction;
     private Action mEdgeLongSwipeAction;
+    private Action mThreeFingersSwipeAction;
 
     // support for activating the lock screen while the screen is on
     private HashSet<Integer> mAllowLockscreenWhenOnDisplays = new HashSet<>();
@@ -778,6 +785,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     // Maps global key codes to the components that will handle them.
     private GlobalKeyManager mGlobalKeyManager;
 
+    private boolean mGlobalActionsOnLockEnable = true;
+
     private final com.android.internal.policy.LogDecelerateInterpolator mLogDecelerateInterpolator
             = new LogDecelerateInterpolator(100, 0);
     private final DeferredKeyActionExecutor mDeferredKeyActionExecutor =
@@ -855,6 +864,9 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
     private boolean mLongSwipeDown;
     private CameraAvailbilityListener mCameraAvailabilityListener;
+
+    private ThreeFingersSwipeListener mThreeFingersSwipe;
+    private boolean mThreeFingersSwipeHasAction;
 
     private class PolicyHandler extends Handler {
 
@@ -1093,6 +1105,9 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     LineageSettings.System.KEY_EDGE_LONG_SWIPE_ACTION), false, this,
                     UserHandle.USER_ALL);
             resolver.registerContentObserver(LineageSettings.System.getUriFor(
+                    LineageSettings.System.KEY_THREE_FINGERS_SWIPE_ACTION), false, this,
+                    UserHandle.USER_ALL);
+            resolver.registerContentObserver(LineageSettings.System.getUriFor(
                     LineageSettings.System.HOME_WAKE_SCREEN), false, this,
                     UserHandle.USER_ALL);
             resolver.registerContentObserver(LineageSettings.System.getUriFor(
@@ -1115,6 +1130,12 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     UserHandle.USER_ALL);
             resolver.registerContentObserver(LineageSettings.System.getUriFor(
                     LineageSettings.System.VOLUME_UP_AND_DOWN_MUTE), false, this,
+                    UserHandle.USER_ALL);
+            resolver.registerContentObserver(Settings.System.getUriFor(
+                    Settings.System.LOCKSCREEN_ENABLE_POWER_MENU), true, this,
+                    UserHandle.USER_ALL);
+            resolver.registerContentObserver(Settings.System.getUriFor(
+                    Settings.System.DOZE_TRIGGER_DOUBLETAP), false, this,
                     UserHandle.USER_ALL);
             updateSettings();
         }
@@ -2050,10 +2071,14 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     void showGlobalActionsInternal() {
+        final boolean keyguardShowing = isKeyguardShowingAndNotOccluded();
+        if (keyguardShowing && isKeyguardSecure(mCurrentUserId) &&
+                !mGlobalActionsOnLockEnable) {
+            return;
+        }
         if (mGlobalActions == null) {
             mGlobalActions = mGlobalActionsFactory.get();
         }
-        final boolean keyguardShowing = isKeyguardShowingAndNotOccluded();
         mGlobalActions.showDialog(keyguardShowing, isDeviceProvisioned());
         // since it took two seconds of long press to bring this up,
         // poke the wake lock so they have some time to see the dialog.
@@ -2269,6 +2294,27 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 break;
             case KILL_APP:
                 ActionUtils.killForegroundApp(mContext, mCurrentUserId);
+                break;
+            case TORCH:
+                toggleTorch();
+                break;
+            case SCREENSHOT:
+                interceptScreenshotChord(SCREENSHOT_KEY_OTHER, 0 /*pressDelay*/);
+                break;
+            case VOLUME_PANEL:
+                toggleVolumePanel();
+                break;
+            case CLEAR_ALL_NOTIFICATIONS:
+                clearAllNotifications();
+                break;
+            case NOTIFICATIONS:
+                toggleNotificationPanel();
+                break;
+            case QS_PANEL:
+                toggleQsPanel();
+                break;
+            case RINGER_MODES:
+                toggleRingerModes();
                 break;
             default:
                 break;
@@ -2530,6 +2576,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         Resources res = mContext.getResources();
         mWakeOnDpadKeyPress =
                 res.getBoolean(com.android.internal.R.bool.config_wakeOnDpadKeyPress);
+
+        // Double-tap-to-doze
+        mNativeDoubleTapToDozeAvailable = !TextUtils.isEmpty(
+                mContext.getResources().getString(R.string.config_dozeDoubleTapSensorType));
 
         // Init display burn-in protection
         boolean burnInProtectionEnabled = mContext.getResources().getBoolean(
@@ -3312,6 +3362,26 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 LineageSettings.System.KEY_EDGE_LONG_SWIPE_ACTION,
                 mEdgeLongSwipeAction);
 
+        Action threeFingersSwipeAction = Action.fromSettings(resolver,
+                LineageSettings.System.KEY_THREE_FINGERS_SWIPE_ACTION,
+                Action.NOTHING);
+
+        if (mThreeFingersSwipe != null && mThreeFingersSwipeAction != threeFingersSwipeAction) {
+            mThreeFingersSwipeAction = threeFingersSwipeAction;
+            if (mThreeFingersSwipeAction != Action.NOTHING && !mThreeFingersSwipeHasAction) {
+                mThreeFingersSwipeHasAction = true;
+                mWindowManagerFuncs.registerPointerEventListener(mThreeFingersSwipe, DEFAULT_DISPLAY);
+            } else if (mThreeFingersSwipeAction == Action.NOTHING && mThreeFingersSwipeHasAction) {
+                mWindowManagerFuncs.unregisterPointerEventListener(mThreeFingersSwipe, DEFAULT_DISPLAY);
+                mThreeFingersSwipeHasAction = false;
+            }
+            try {
+                mActivityManagerService.setThreeFingersSwipeActive(mThreeFingersSwipeHasAction);
+            } catch (Exception e) {
+                // Do nothing
+            }
+        }
+
         mShortPressOnWindowBehavior = SHORT_PRESS_WINDOW_NOTHING;
         if (mPackageManager.hasSystemFeature(FEATURE_PICTURE_IN_PICTURE)) {
             mShortPressOnWindowBehavior = SHORT_PRESS_WINDOW_PICTURE_IN_PICTURE;
@@ -3344,6 +3414,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         final boolean kidsModeEnabled;
         int mDeviceHardwareWakeKeys = mContext.getResources().getInteger(
                 org.lineageos.platform.internal.R.integer.config_deviceHardwareWakeKeys);
+
+        // Double-tap-to-doze
+        mDoubleTapToWake = Settings.Secure.getInt(resolver,
+                Settings.Secure.DOUBLE_TAP_TO_WAKE, 0) == 1;
+        mDoubleTapToDoze = Settings.System.getInt(resolver,
+                Settings.System.DOZE_TRIGGER_DOUBLETAP, 0) == 1;
+
         synchronized (mLock) {
             mEndcallBehavior = Settings.System.getIntForUser(resolver,
                     Settings.System.END_BUTTON_BEHAVIOR,
@@ -3513,6 +3590,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 mKidsModeEnabled = kidsModeEnabled;
                 updateKidsModeSettings = true;
             }
+
+            mGlobalActionsOnLockEnable = Settings.System.getIntForUser(resolver,
+                    Settings.System.LOCKSCREEN_ENABLE_POWER_MENU, 1,
+                    UserHandle.USER_CURRENT) != 0;
         }
         if (updateKidsModeSettings) {
             updateKidsModeSettings(kidsModeEnabled);
@@ -6111,8 +6192,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                         } else {
                             intent = new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
                         }
-                        isWakeKey = true;
-                        startActivityAsUser(intent, UserHandle.CURRENT_OR_SELF);
+                        if (!isAlreadyRunning(intent)) {
+                            isWakeKey = true;
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, "Camera key - Launch Camera");
+                            startActivityAsUser(intent, UserHandle.CURRENT_OR_SELF);
+                        }
                     }
                 }
                 break;
@@ -6230,7 +6314,15 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 notifyKeyGestureCompletedOnActionUp(event,
                         KeyGestureEvent.KEY_GESTURE_TYPE_WAKEUP);
                 result &= ~ACTION_PASS_TO_USER;
-                isWakeKey = true;
+                // Double-tap-to-doze
+                if (mDoubleTapToWake && mDoubleTapToDoze && !mNativeDoubleTapToDozeAvailable) {
+                    isWakeKey = false;
+                    if (!down) {
+                        mContext.sendBroadcast(new Intent("com.android.systemui.doze.pulse"));
+                    }
+                } else {
+                    isWakeKey = true;
+                }
                 break;
             }
 
@@ -6466,6 +6558,38 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             mWindowWakeUpPolicy.wakeUpFromPowerKeyCameraGesture();
         }
         return true;
+    }
+
+    /**
+     * Check if an activity requested via an intent is already the current top / focused one
+     * @param intent
+     */
+    private boolean isAlreadyRunning(Intent intent) {
+        // When the screen is not on, we consider the activity to be not running
+        if (!isScreenOn()) {
+            return false;
+        }
+
+        ResolveInfo info = mPackageManager.resolveActivityAsUser(intent,
+                PackageManager.MATCH_DEFAULT_ONLY,
+                mCurrentUserId);
+        if (info == null || info.activityInfo == null || info.activityInfo.packageName == null) {
+            return false;
+        }
+
+        String resolvedName = info.activityInfo.packageName;
+
+        try {
+            final ActivityTaskManager.RootTaskInfo focusedStack =
+                    ActivityTaskManager.getService().getFocusedRootTaskInfo();
+            if (focusedStack != null && focusedStack.topActivity != null) {
+                return resolvedName.equals(focusedStack.topActivity.getPackageName());
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+
+        return false;
     }
 
     /**
@@ -7385,6 +7509,20 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         if (mVrManagerInternal != null) {
             mVrManagerInternal.addPersistentVrModeStateListener(mPersistentVrModeListener);
         }
+
+        mThreeFingersSwipe = new ThreeFingersSwipeListener(mContext, new ThreeFingersSwipeListener.Callbacks() {
+            @Override
+            public void onSwipeThreeFingers() {
+                if (mThreeFingersSwipeAction == Action.NOTHING)
+                    return;
+                long now = SystemClock.uptimeMillis();
+                KeyEvent event = new KeyEvent(now, now, KeyEvent.ACTION_DOWN,
+                        KeyEvent.KEYCODE_SYSRQ, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
+                        KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_TOUCHSCREEN);
+                performKeyAction(mThreeFingersSwipeAction, event);
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, "Three Fingers Swipe");
+            }
+        });
 
         readCameraLensCoverState();
         updateUiMode();
@@ -8505,6 +8643,53 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
         public boolean isAnyCameraInUse() {
             return !mCameraInUse.isEmpty();
+        }
+    }
+
+    private void toggleVolumePanel() {
+        AudioManager am = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
+        am.adjustVolume(AudioManager.ADJUST_SAME, AudioManager.FLAG_SHOW_UI);
+    }
+
+    private void clearAllNotifications() {
+        IStatusBarService statusBarService = getStatusBarService();
+        if (statusBarService != null) {
+            try {
+                statusBarService.onClearAllNotifications(ActivityManager.getCurrentUser());
+            } catch (RemoteException e) {
+                // do nothing.
+            }
+        }
+    }
+
+    private void toggleQsPanel() {
+        IStatusBarService statusBarService = getStatusBarService();
+        if (statusBarService != null) {
+            try {
+                statusBarService.expandSettingsPanel(null);
+            } catch (RemoteException e) {
+                // do nothing.
+            }
+        }
+    }
+
+    private void toggleRingerModes() {
+        AudioManager am = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
+
+        switch (am.getRingerMode()) {
+            case AudioManager.RINGER_MODE_NORMAL:
+                if (mVibrator.hasVibrator()) {
+                    am.setRingerMode(AudioManager.RINGER_MODE_VIBRATE);
+                }
+                break;
+            case AudioManager.RINGER_MODE_VIBRATE:
+                am.setRingerMode(AudioManager.RINGER_MODE_NORMAL);
+                NotificationManager nm = getNotificationService();
+                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY);
+                break;
+            case AudioManager.RINGER_MODE_SILENT:
+                am.setRingerMode(AudioManager.RINGER_MODE_NORMAL);
+                break;
         }
     }
 }

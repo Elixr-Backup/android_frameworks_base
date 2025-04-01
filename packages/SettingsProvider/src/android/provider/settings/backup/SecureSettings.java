@@ -121,6 +121,8 @@ public class SecureSettings {
         Settings.Secure.POWER_MENU_LOCKED_SHOW_CONTENT,
         Settings.Secure.DOZE_ENABLED,
         Settings.Secure.DOZE_ALWAYS_ON,
+        Settings.Secure.DOZE_ALWAYS_ON_AUTO_MODE,
+        Settings.Secure.DOZE_ALWAYS_ON_AUTO_TIME,
         Settings.Secure.DOZE_PICK_UP_GESTURE,
         Settings.Secure.DOZE_DOUBLE_TAP_GESTURE,
         Settings.Secure.DOZE_TAP_SCREEN_GESTURE,
@@ -289,5 +291,8 @@ public class SecureSettings {
         Settings.Secure.MANDATORY_BIOMETRICS_REQUIREMENTS_SATISFIED,
         Settings.Secure.ADVANCED_PROTECTION_MODE,
         Settings.Secure.ACCESSIBILITY_KEY_GESTURE_TARGETS,
+        Settings.Secure.DOZE_DOUBLE_TAP_GESTURE_AMBIENT,
+        Settings.Secure.DOZE_PICK_UP_GESTURE_AMBIENT,
+        Settings.Secure.VPN_ENFORCE_DNS,
     };
 }

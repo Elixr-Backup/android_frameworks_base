@@ -72,6 +72,8 @@ public class ThemeOverlayApplier implements Dumpable {
 
     static final String OVERLAY_CATEGORY_DYNAMIC_COLOR =
             "android.theme.customization.dynamic_color";
+    static final String OVERLAY_CATEGORY_BG_COLOR =
+            "android.theme.customization.bg_color";
     static final String OVERLAY_CATEGORY_ACCENT_COLOR =
             "android.theme.customization.accent_color";
     static final String OVERLAY_CATEGORY_SYSTEM_PALETTE =
@@ -84,6 +86,14 @@ public class ThemeOverlayApplier implements Dumpable {
     static final String OVERLAY_COLOR_INDEX = "android.theme.customization.color_index";
 
     static final String OVERLAY_COLOR_BOTH = "android.theme.customization.color_both";
+
+    static final String OVERLAY_LUMINANCE_FACTOR = "android.theme.customization.luminance_factor";
+
+    static final String OVERLAY_CHROMA_FACTOR = "android.theme.customization.chroma_factor";
+
+    static final String OVERLAY_WHOLE_PALETTE = "android.theme.customization.whole_palette";
+
+    static final String OVERLAY_TINT_BACKGROUND = "android.theme.customization.tint_background";
 
     static final String COLOR_SOURCE_PRESET = "preset";
 
@@ -113,14 +123,30 @@ public class ThemeOverlayApplier implements Dumpable {
     @VisibleForTesting
     static final String OVERLAY_CATEGORY_ICON_THEME_PICKER =
             "android.theme.customization.icon_pack.themepicker";
-
+    @VisibleForTesting
+    static final String OVERLAY_CATEGORY_ICON_SIGNAL =
+            "android.theme.customization.signal_icon";
+    @VisibleForTesting
+    static final String OVERLAY_CATEGORY_ICON_WIFI =
+            "android.theme.customization.wifi_icon";
+    @VisibleForTesting
+    static final String OVERLAY_CATEGORY_LOCK_CLOCK_FONT =
+            "android.theme.customization.lockscreen_clock_font";
+    static final String OVERLAY_CATEGORY_NAVBAR =
+            "android.theme.customization.navbar";
+    @VisibleForTesting
+    static final String OVERLAY_CATEGORY_DATA =
+            "android.customization.sb_data";
+    @VisibleForTesting
+    static final String OVERLAY_CATEGORY_BRIGHTNESS_SLIDER =
+            "android.theme.customization.brightness_slider";
+    
     /*
      * All theme customization categories used by the system, in order that they should be applied,
      * starts with launcher and grouped by target package.
      */
     static final List<String> THEME_CATEGORIES = Lists.newArrayList(
             OVERLAY_CATEGORY_SYSTEM_PALETTE,
-            OVERLAY_CATEGORY_ICON_LAUNCHER,
             OVERLAY_CATEGORY_SHAPE,
             OVERLAY_CATEGORY_FONT,
             OVERLAY_CATEGORY_ACCENT_COLOR,
@@ -128,7 +154,12 @@ public class ThemeOverlayApplier implements Dumpable {
             OVERLAY_CATEGORY_ICON_ANDROID,
             OVERLAY_CATEGORY_ICON_SYSUI,
             OVERLAY_CATEGORY_ICON_SETTINGS,
-            OVERLAY_CATEGORY_ICON_THEME_PICKER);
+            OVERLAY_CATEGORY_ICON_SIGNAL,
+            OVERLAY_CATEGORY_ICON_WIFI,
+            OVERLAY_CATEGORY_LOCK_CLOCK_FONT,
+            OVERLAY_CATEGORY_NAVBAR,
+            OVERLAY_CATEGORY_DATA,
+            OVERLAY_CATEGORY_BRIGHTNESS_SLIDER);
 
     /* Categories that need to be applied to the current user as well as the system user. */
     @VisibleForTesting
@@ -139,7 +170,11 @@ public class ThemeOverlayApplier implements Dumpable {
             OVERLAY_CATEGORY_FONT,
             OVERLAY_CATEGORY_SHAPE,
             OVERLAY_CATEGORY_ICON_ANDROID,
-            OVERLAY_CATEGORY_ICON_SYSUI);
+            OVERLAY_CATEGORY_ICON_SYSUI,
+            OVERLAY_CATEGORY_LOCK_CLOCK_FONT,
+            OVERLAY_CATEGORY_NAVBAR,
+            OVERLAY_CATEGORY_DATA,
+            OVERLAY_CATEGORY_BRIGHTNESS_SLIDER);
 
     /* Allowed overlay categories for each target package. */
     private final Map<String, Set<String>> mTargetPackageToCategories = new ArrayMap<>();
@@ -172,10 +207,6 @@ public class ThemeOverlayApplier implements Dumpable {
                 Sets.newHashSet(OVERLAY_CATEGORY_ICON_SYSUI));
         mTargetPackageToCategories.put(SETTINGS_PACKAGE,
                 Sets.newHashSet(OVERLAY_CATEGORY_ICON_SETTINGS));
-        mTargetPackageToCategories.put(mLauncherPackage,
-                Sets.newHashSet(OVERLAY_CATEGORY_ICON_LAUNCHER));
-        mTargetPackageToCategories.put(mThemePickerPackage,
-                Sets.newHashSet(OVERLAY_CATEGORY_ICON_THEME_PICKER));
         mCategoryToTargetPackage.put(OVERLAY_CATEGORY_ACCENT_COLOR, ANDROID_PACKAGE);
         mCategoryToTargetPackage.put(OVERLAY_CATEGORY_DYNAMIC_COLOR, ANDROID_PACKAGE);
         mCategoryToTargetPackage.put(OVERLAY_CATEGORY_FONT, ANDROID_PACKAGE);
@@ -183,9 +214,13 @@ public class ThemeOverlayApplier implements Dumpable {
         mCategoryToTargetPackage.put(OVERLAY_CATEGORY_ICON_ANDROID, ANDROID_PACKAGE);
         mCategoryToTargetPackage.put(OVERLAY_CATEGORY_ICON_SYSUI, SYSUI_PACKAGE);
         mCategoryToTargetPackage.put(OVERLAY_CATEGORY_ICON_SETTINGS, SETTINGS_PACKAGE);
-        mCategoryToTargetPackage.put(OVERLAY_CATEGORY_ICON_LAUNCHER, mLauncherPackage);
-        mCategoryToTargetPackage.put(OVERLAY_CATEGORY_ICON_THEME_PICKER, mThemePickerPackage);
-
+        mCategoryToTargetPackage.put(OVERLAY_CATEGORY_ICON_SIGNAL, SYSUI_PACKAGE);
+        mCategoryToTargetPackage.put(OVERLAY_CATEGORY_ICON_WIFI, SYSUI_PACKAGE);
+        mCategoryToTargetPackage.put(OVERLAY_CATEGORY_LOCK_CLOCK_FONT, ANDROID_PACKAGE);
+        mCategoryToTargetPackage.put(OVERLAY_CATEGORY_NAVBAR, SYSUI_PACKAGE);
+        mCategoryToTargetPackage.put(OVERLAY_CATEGORY_DATA, SYSUI_PACKAGE);
+        mCategoryToTargetPackage.put(OVERLAY_CATEGORY_BRIGHTNESS_SLIDER, SYSUI_PACKAGE);
+        
         dumpManager.registerDumpable(TAG, this);
     }
 
@@ -234,8 +269,12 @@ public class ThemeOverlayApplier implements Dumpable {
             if (pendingCreation != null) {
                 isBlackMode = pendingCreation.length == 2;
                 for (FabricatedOverlay overlay : pendingCreation) {
-                    identifiersPending.add(overlay.getIdentifier());
-                    transaction.registerFabricatedOverlay(overlay);
+                    try {
+                        identifiersPending.add(overlay.getIdentifier());
+                        transaction.registerFabricatedOverlay(overlay);
+                    } catch (NullPointerException e) {
+                        Log.e(TAG, "NPE for overlay.getIdentifier()", e);
+                    }
                 }
             }
 

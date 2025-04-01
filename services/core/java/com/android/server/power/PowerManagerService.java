@@ -2794,7 +2794,7 @@ public final class PowerManagerService extends SystemService
                 if (mBootCompleted) {
                     if (mIsPowered && !BatteryManager.isPlugWired(oldPlugType)
                             && BatteryManager.isPlugWired(mPlugType)) {
-                        mNotifier.onWiredChargingStarted(mUserId);
+                        mNotifier.onWiredChargingStarted(mBatteryLevel, mUserId);
                     } else if (wasPowered && !mIsPowered) {
                         if (oldPlugType == BatteryManager.BATTERY_PLUGGED_WIRELESS) {
                             mNotifier.onWirelessChargingInterrupted(mUserId);
@@ -2828,10 +2828,11 @@ public final class PowerManagerService extends SystemService
                 && wasPowered && !mIsPowered) {
             return false;
         }
-        // Don't wake when undocked from wireless charger.
+        // Don't wake when undocked from wireless charger unless we are certain of it.
         // See WirelessChargerDetector for justification.
         if (wasPowered && !mIsPowered
-                && oldPlugType == BatteryManager.BATTERY_PLUGGED_WIRELESS) {
+                && oldPlugType == BatteryManager.BATTERY_PLUGGED_WIRELESS
+                && dockedOnWirelessCharger) {
             return false;
         }
 

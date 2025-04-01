@@ -19,11 +19,9 @@ import static com.android.systemui.statusbar.phone.fragment.StatusBarVisibilityM
 import android.annotation.Nullable;
 import android.annotation.SuppressLint;
 import android.app.Fragment;
-import android.database.ContentObserver;
 import android.os.Bundle;
 import android.os.Parcelable;
 import android.os.Trace;
-import android.os.UserHandle;
 import android.provider.Settings;
 import android.telephony.SubscriptionManager;
 import android.util.ArrayMap;
@@ -82,10 +80,10 @@ import com.android.systemui.statusbar.pipeline.shared.ui.viewmodel.HomeStatusBar
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.window.StatusBarWindowStateController;
 import com.android.systemui.statusbar.window.StatusBarWindowStateListener;
+import com.android.systemui.tuner.TunerService;
 import com.android.systemui.util.CarrierConfigTracker;
 import com.android.systemui.util.CarrierConfigTracker.CarrierConfigChangedListener;
 import com.android.systemui.util.CarrierConfigTracker.DefaultDataSubscriptionChangedListener;
-import com.android.systemui.util.settings.SecureSettings;
 
 import kotlin.Unit;
 
@@ -109,7 +107,12 @@ import javax.inject.Inject;
 @SuppressLint("ValidFragment")
 public class CollapsedStatusBarFragment extends Fragment implements CommandQueue.Callbacks,
         StatusBarStateController.StateListener,
-        SystemStatusAnimationCallback, Dumpable {
+        SystemStatusAnimationCallback, Dumpable, TunerService.Tunable {
+
+    private static final String STATUS_BAR_SHOW_VIBRATE_ICON =
+            Settings.Secure.STATUS_BAR_SHOW_VIBRATE_ICON;
+    private static final String STATUSBAR_CLOCK_CHIP =
+            "system:" + Settings.System.STATUSBAR_CLOCK_CHIP;
 
     public static final String TAG = "CollapsedStatusBarFragment";
     private static final String EXTRA_PANEL_STATE = "panel_state";
@@ -125,16 +128,13 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
     private final KeyguardStateController mKeyguardStateController;
     private final PanelExpansionInteractor mPanelExpansionInteractor;
     private MultiSourceMinAlphaController mEndSideAlphaController;
-    private MultiSourceMinAlphaController mNetworkTrafficStartAlphaController;
-    private MultiSourceMinAlphaController mNetworkTrafficCenterAlphaController;
-    private MultiSourceMinAlphaController mNetworkTrafficEndAlphaController;
     private LinearLayout mEndSideContent;
     private View mPrimaryOngoingActivityChip;
     private View mSecondaryOngoingActivityChip;
     private View mNotificationIconAreaInner;
-    private View mNetworkTrafficHolderStart;
-    private View mNetworkTrafficHolderCenter;
-    private View mNetworkTrafficHolderEnd;
+    private View mClockView;
+    private View mCenterClockView;
+    private View mRightClockView;
     // Visibilities come in from external system callers via disable flags, but we also sometimes
     // modify the visibilities internally. We need to store both so that we don't accidentally
     // propagate our internally modified flags for too long.
@@ -156,7 +156,7 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
     private final HomeStatusBarViewBinder mHomeStatusBarViewBinder;
     private final StatusBarHideIconsForBouncerManager mStatusBarHideIconsForBouncerManager;
     private final DarkIconManager.Factory mDarkIconManagerFactory;
-    private final SecureSettings mSecureSettings;
+    private final TunerService mTunerService;
     private final Executor mMainExecutor;
     private final DumpManager mDumpManager;
     private final StatusBarWindowStateController mStatusBarWindowStateController;
@@ -166,9 +166,12 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
 
     private ClockController mClockController;
     private PhoneStatusBarViewController mStatusBarViewController;
+    private boolean mShowSBClockBg;
 
     private List<String> mBlockedIcons = new ArrayList<>();
     private Map<Startable, Startable.State> mStartableStates = new ArrayMap<>();
+
+    private boolean mShowVibrateIcon;
 
     private final OngoingCallListener mOngoingCallListener = new OngoingCallListener() {
         @Override
@@ -268,7 +271,7 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
             CarrierConfigTracker carrierConfigTracker,
             CollapsedStatusBarFragmentLogger collapsedStatusBarFragmentLogger,
             OperatorNameViewController.Factory operatorNameViewControllerFactory,
-            SecureSettings secureSettings,
+            TunerService tunerService,
             @Main Executor mainExecutor,
             DumpManager dumpManager,
             StatusBarWindowStateController statusBarWindowStateController,
@@ -291,7 +294,7 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         mCarrierConfigTracker = carrierConfigTracker;
         mCollapsedStatusBarFragmentLogger = collapsedStatusBarFragmentLogger;
         mOperatorNameViewControllerFactory = operatorNameViewControllerFactory;
-        mSecureSettings = secureSettings;
+        mTunerService = tunerService;
         mMainExecutor = mainExecutor;
         mDumpManager = dumpManager;
         mStatusBarWindowStateController = statusBarWindowStateController;
@@ -371,22 +374,15 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
                         StatusBarLocation.HOME,
                         mHomeStatusBarComponent.getDarkIconDispatcher());
         mDarkIconManager.setShouldLog(true);
-        updateBlockedIcons();
         mStatusBarIconController.addIconGroup(mDarkIconManager);
         mEndSideContent = mStatusBar.findViewById(R.id.status_bar_end_side_content);
         mEndSideAlphaController = new MultiSourceMinAlphaController(mEndSideContent);
-        mNetworkTrafficHolderStart = mStatusBar.findViewById(R.id.network_traffic_holder_start);
-        mNetworkTrafficHolderCenter = mStatusBar.findViewById(R.id.network_traffic_holder_center);
-        mNetworkTrafficHolderEnd = mStatusBar.findViewById(R.id.network_traffic_holder_end);
-        mNetworkTrafficStartAlphaController =
-                new MultiSourceMinAlphaController(mNetworkTrafficHolderStart);
-        mNetworkTrafficCenterAlphaController =
-                new MultiSourceMinAlphaController(mNetworkTrafficHolderCenter);
-        mNetworkTrafficEndAlphaController =
-                new MultiSourceMinAlphaController(mNetworkTrafficHolderEnd);
         mPrimaryOngoingActivityChip = mStatusBar.findViewById(R.id.ongoing_activity_chip_primary);
         mSecondaryOngoingActivityChip =
                 mStatusBar.findViewById(R.id.ongoing_activity_chip_secondary);
+        mClockView = mStatusBar.findViewById(R.id.clock);
+        mCenterClockView = mStatusBar.findViewById(R.id.clock_center);
+        mRightClockView = mStatusBar.findViewById(R.id.clock_right);
         if (!StatusBarRootModernization.isEnabled()) {
             showEndSideContent(false);
             showClock(false);
@@ -427,16 +423,11 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         List<String> blockList = Arrays.asList(getResources().getStringArray(
                 R.array.config_collapsed_statusbar_icon_blocklist));
         String vibrateIconSlot = getString(com.android.internal.R.string.status_bar_volume);
-        boolean showVibrateIcon =
-                mSecureSettings.getIntForUser(
-                        Settings.Secure.STATUS_BAR_SHOW_VIBRATE_ICON,
-                        1,
-                        UserHandle.USER_CURRENT) == 0;
 
         // Filter out vibrate icon from the blocklist if the setting is on
         for (int i = 0; i < blockList.size(); i++) {
             if (blockList.get(i).equals(vibrateIconSlot)) {
-                if (showVibrateIcon) {
+                if (!mShowVibrateIcon) {
                     mBlockedIcons.add(blockList.get(i));
                 }
             } else {
@@ -479,11 +470,8 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         initOngoingCallChip();
         mAnimationScheduler.addCallback(this);
 
-        mSecureSettings.registerContentObserverForUserSync(
-                Settings.Secure.STATUS_BAR_SHOW_VIBRATE_ICON,
-                false,
-                mVolumeSettingObserver,
-                UserHandle.USER_ALL);
+        mTunerService.addTunable(this, STATUS_BAR_SHOW_VIBRATE_ICON);
+        mTunerService.addTunable(this, STATUSBAR_CLOCK_CHIP);
     }
 
     @Override
@@ -491,11 +479,12 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         super.onPause();
         mCommandQueue.removeCallback(this);
         mStatusBarStateController.removeCallback(this);
+        mTunerService.removeTunable(this);
+        mClockController.removeTunable();
         if (!StatusBarRootModernization.isEnabled()) {
             mOngoingCallController.removeCallback(mOngoingCallListener);
         }
         mAnimationScheduler.removeCallback(this);
-        mSecureSettings.unregisterContentObserverSync(mVolumeSettingObserver);
     }
 
     @Override
@@ -514,6 +503,50 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         if (mNicBindingDisposable != null) {
             mNicBindingDisposable.dispose();
             mNicBindingDisposable = null;
+        }
+    }
+
+    @Override
+    public void onTuningChanged(String key, String newValue) {
+        switch (key) {
+            case STATUS_BAR_SHOW_VIBRATE_ICON:
+                mShowVibrateIcon = 
+                        TunerService.parseIntegerSwitch(newValue, true);
+                updateBlockedIcons();
+                break;
+            case STATUSBAR_CLOCK_CHIP:
+                mShowSBClockBg = 
+                        TunerService.parseIntegerSwitch(newValue, false);
+                updateStatusBarClock();
+                break;
+            default:
+                break;
+         }
+    }
+
+    private void updateStatusBarClock() {
+        if (mShowSBClockBg) {
+            mClockView.setBackgroundResource(R.drawable.sb_date_bg);
+            mClockView.setPadding(10,2,10,2);
+            mCenterClockView.setBackgroundResource(R.drawable.sb_date_bg);
+            mCenterClockView.setPadding(10,2,10,2);
+            mRightClockView.setBackgroundResource(R.drawable.sb_date_bg);
+            mRightClockView.setPadding(10,2,10,2);
+        } else {
+            int clockPaddingStart = getResources().getDimensionPixelSize(
+                    R.dimen.status_bar_clock_starting_padding);
+            int clockPaddingEnd = getResources().getDimensionPixelSize(
+                    R.dimen.status_bar_clock_end_padding);
+            int leftClockPaddingStart = getResources().getDimensionPixelSize(
+                    R.dimen.status_bar_left_clock_starting_padding);
+            int leftClockPaddingEnd = getResources().getDimensionPixelSize(
+                    R.dimen.status_bar_left_clock_end_padding);
+            mClockView.setBackgroundResource(0);
+            mClockView.setPaddingRelative(leftClockPaddingStart, 0, leftClockPaddingEnd, 0);
+            mCenterClockView.setBackgroundResource(0);
+            mCenterClockView.setPaddingRelative(0,0,0,0);
+            mRightClockView.setBackgroundResource(0);
+            mRightClockView.setPaddingRelative(clockPaddingStart, 0, clockPaddingEnd, 0);
         }
     }
 
@@ -631,6 +664,9 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
             updateNotificationIconAreaAndOngoingActivityChip(animate);
         }
 
+        if (mClockController.getClock() == null)
+            return;
+
         // The clock may have already been hidden, but we might want to shift its
         // visibility to GONE from INVISIBLE or vice versa
         if (newModel.getShowClock() != previousModel.getShowClock()
@@ -687,7 +723,7 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
                         && mHasSecondaryOngoingActivity;
 
         View clockView = mClockController.getClock();
-        boolean notLeftClock = clockView.getId() != R.id.clock;
+        boolean notLeftClock = clockView != null && clockView.getId() != R.id.clock;
         return new StatusBarVisibilityModel(
                 showClock || notLeftClock,
                 externalModel.getShowNotificationIcons(),
@@ -803,18 +839,9 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         StatusBarRootModernization.assertInLegacyMode();
         if (!animate || !mAnimationsEnabled) {
             mEndSideAlphaController.setAlpha(/*alpha*/ 0f, SOURCE_OTHER);
-            mNetworkTrafficStartAlphaController.setAlpha(/*alpha*/ 0f, SOURCE_OTHER);
-            mNetworkTrafficCenterAlphaController.setAlpha(/*alpha*/ 0f, SOURCE_OTHER);
-            mNetworkTrafficEndAlphaController.setAlpha(/*alpha*/ 0f, SOURCE_OTHER);
         } else {
             mEndSideAlphaController.animateToAlpha(/*alpha*/ 0f, SOURCE_OTHER, FADE_OUT_DURATION,
                     InterpolatorsAndroidX.ALPHA_OUT, /*startDelay*/ 0);
-            mNetworkTrafficStartAlphaController.animateToAlpha(/*alpha*/ 0f, SOURCE_OTHER,
-                    FADE_OUT_DURATION, InterpolatorsAndroidX.ALPHA_OUT, /*startDelay*/ 0);
-            mNetworkTrafficCenterAlphaController.animateToAlpha(/*alpha*/ 0f, SOURCE_OTHER,
-                    FADE_OUT_DURATION, InterpolatorsAndroidX.ALPHA_OUT, /*startDelay*/ 0);
-            mNetworkTrafficEndAlphaController.animateToAlpha(/*alpha*/ 0f, SOURCE_OTHER,
-                    FADE_OUT_DURATION, InterpolatorsAndroidX.ALPHA_OUT, /*startDelay*/ 0);
         }
     }
 
@@ -822,9 +849,6 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         StatusBarRootModernization.assertInLegacyMode();
         if (!animate || !mAnimationsEnabled) {
             mEndSideAlphaController.setAlpha(1f, SOURCE_OTHER);
-            mNetworkTrafficStartAlphaController.setAlpha(1f, SOURCE_OTHER);
-            mNetworkTrafficCenterAlphaController.setAlpha(1f, SOURCE_OTHER);
-            mNetworkTrafficEndAlphaController.setAlpha(1f, SOURCE_OTHER);
             return;
         }
         if (mKeyguardStateController.isKeyguardFadingAway()) {
@@ -832,27 +856,9 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
                     mKeyguardStateController.getKeyguardFadingAwayDuration(),
                     InterpolatorsAndroidX.LINEAR_OUT_SLOW_IN,
                     mKeyguardStateController.getKeyguardFadingAwayDelay());
-            mNetworkTrafficStartAlphaController.animateToAlpha(/*alpha*/ 1f, SOURCE_OTHER,
-                    mKeyguardStateController.getKeyguardFadingAwayDuration(),
-                    InterpolatorsAndroidX.LINEAR_OUT_SLOW_IN,
-                    mKeyguardStateController.getKeyguardFadingAwayDelay());
-            mNetworkTrafficCenterAlphaController.animateToAlpha(/*alpha*/ 1f, SOURCE_OTHER,
-                    mKeyguardStateController.getKeyguardFadingAwayDuration(),
-                    InterpolatorsAndroidX.LINEAR_OUT_SLOW_IN,
-                    mKeyguardStateController.getKeyguardFadingAwayDelay());
-            mNetworkTrafficEndAlphaController.animateToAlpha(/*alpha*/ 1f, SOURCE_OTHER,
-                    mKeyguardStateController.getKeyguardFadingAwayDuration(),
-                    InterpolatorsAndroidX.LINEAR_OUT_SLOW_IN,
-                    mKeyguardStateController.getKeyguardFadingAwayDelay());
         } else {
             mEndSideAlphaController.animateToAlpha(/*alpha*/ 1f, SOURCE_OTHER, FADE_IN_DURATION,
                     InterpolatorsAndroidX.ALPHA_IN, FADE_IN_DELAY);
-            mNetworkTrafficStartAlphaController.animateToAlpha(/*alpha*/ 1f, SOURCE_OTHER,
-                    FADE_IN_DURATION, InterpolatorsAndroidX.ALPHA_IN, FADE_IN_DELAY);
-            mNetworkTrafficCenterAlphaController.animateToAlpha(/*alpha*/ 1f, SOURCE_OTHER,
-                    FADE_IN_DURATION, InterpolatorsAndroidX.ALPHA_IN, FADE_IN_DELAY);
-            mNetworkTrafficEndAlphaController.animateToAlpha(/*alpha*/ 1f, SOURCE_OTHER,
-                    FADE_IN_DURATION, InterpolatorsAndroidX.ALPHA_IN, FADE_IN_DELAY);
         }
     }
 
@@ -901,6 +907,8 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
      */
     private int clockHiddenMode() {
         StatusBarRootModernization.assertInLegacyMode();
+        if (mClockController.getClock() == null)
+            return View.GONE;
         if (!mShadeExpansionStateManager.isClosed() && !mKeyguardStateController.isShowing()
                 && !mStatusBarStateController.isDozing()
                 && mClockController.getClock().shouldBeVisible()) {
@@ -958,6 +966,8 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
      */
     private void animateHide(final View v, boolean animate) {
         StatusBarRootModernization.assertInLegacyMode();
+        if (v == null)
+            return;
         animateHiddenState(v, View.INVISIBLE, animate);
     }
 
@@ -966,6 +976,8 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
      */
     private void animateShow(View v, boolean animate) {
         StatusBarRootModernization.assertInLegacyMode();
+        if (v == null)
+            return;
         v.animate().cancel();
         v.setVisibility(View.VISIBLE);
         if (!animate || !mAnimationsEnabled) {
@@ -1047,25 +1059,12 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
     private StatusBarSystemEventDefaultAnimator getSystemEventAnimator() {
         return new StatusBarSystemEventDefaultAnimator(getResources(), (alpha) -> {
             mEndSideAlphaController.setAlpha(alpha, SOURCE_SYSTEM_EVENT_ANIMATOR);
-            mNetworkTrafficStartAlphaController.setAlpha(alpha, SOURCE_SYSTEM_EVENT_ANIMATOR);
-            mNetworkTrafficCenterAlphaController.setAlpha(alpha, SOURCE_SYSTEM_EVENT_ANIMATOR);
-            mNetworkTrafficEndAlphaController.setAlpha(alpha, SOURCE_SYSTEM_EVENT_ANIMATOR);
             return Unit.INSTANCE;
         }, (translationX) -> {
             mEndSideContent.setTranslationX(translationX);
-            mNetworkTrafficHolderStart.setTranslationX(translationX);
-            mNetworkTrafficHolderCenter.setTranslationX(translationX);
-            mNetworkTrafficHolderEnd.setTranslationX(translationX);
             return Unit.INSTANCE;
         }, /*isAnimationRunning*/ false);
     }
-
-    private final ContentObserver mVolumeSettingObserver = new ContentObserver(null) {
-        @Override
-        public void onChange(boolean selfChange) {
-            updateBlockedIcons();
-        }
-    };
 
     @Override
     public void dump(PrintWriter printWriter, String[] args) {

@@ -69,6 +69,9 @@ import java.util.function.Supplier;
 public class BiometricScheduler<T, U> {
 
     private static final String TAG = "BiometricScheduler";
+
+    private boolean mCancel;
+
     // Number of recent operations to keep in our logs for dumpsys
     protected static final int LOG_NUM_RECENT_OPERATIONS = 50;
 
@@ -276,12 +279,15 @@ public class BiometricScheduler<T, U> {
      * @param gestureAvailabilityDispatcher may be null if the sensor does not support gestures
      *                                      (such as fingerprint swipe).
      */
-    public BiometricScheduler(@SensorType int sensorType,
+    public BiometricScheduler(Context context, @SensorType int sensorType,
             @Nullable GestureAvailabilityDispatcher gestureAvailabilityDispatcher) {
         this(new Handler(Looper.getMainLooper()), sensorType, gestureAvailabilityDispatcher,
                 IBiometricService.Stub.asInterface(
                         ServiceManager.getService(Context.BIOMETRIC_SERVICE)),
                 LOG_NUM_RECENT_OPERATIONS);
+
+        mCancel = context.getResources().getBoolean(
+                com.android.internal.R.bool.config_fpCancelIfNotIdle);
     }
 
     /**
@@ -311,17 +317,31 @@ public class BiometricScheduler<T, U> {
             Slog.d(TAG, "No operations, returning to idle");
             return;
         }
+        if (mCurrentUserRetriever == null) {
+            startNextOperationIfIdle();
+            return;
+        }
 
+        // Add null check for mCurrentUserRetriever to avoid NPE
+        if (mCurrentUserRetriever == null) {
+            Slog.e(TAG, "mCurrentUserRetriever is null. Cannot retrieve current user.");
+            return;  // or handle this case as needed
+        }
         final int currentUserId = mCurrentUserRetriever.get();
+
         final int nextUserId = mPendingOperations.getFirst().getTargetUserId();
 
         if (nextUserId == currentUserId || mPendingOperations.getFirst().isStartUserOperation()) {
             startNextOperationIfIdle();
         } else if (currentUserId == UserHandle.USER_NULL && mUserSwitchProvider != null) {
-            final BaseClientMonitor startClient =
-                    mUserSwitchProvider.getStartUserClient(nextUserId);
-            final UserSwitchClientCallback finishedCallback =
-                    new UserSwitchClientCallback(startClient);
+            // Add null check for mUserSwitchProvider before using it
+            final BaseClientMonitor startClient = mUserSwitchProvider.getStartUserClient(nextUserId);
+            if (startClient == null) {
+                Slog.e(TAG, "Cannot start user operation. Start client is null.");
+                return;
+            }
+
+            final UserSwitchClientCallback finishedCallback = new UserSwitchClientCallback(startClient);
 
             Slog.d(TAG, "[Starting User] " + startClient);
             mCurrentOperation = new BiometricSchedulerOperation(
@@ -331,26 +351,33 @@ public class BiometricScheduler<T, U> {
             if (mStopUserClient != null) {
                 Slog.d(TAG, "[Waiting for StopUser] " + mStopUserClient);
             } else {
-                mStopUserClient = mUserSwitchProvider
-                        .getStopUserClient(currentUserId);
-                final UserSwitchClientCallback finishedCallback =
-                        new UserSwitchClientCallback(mStopUserClient);
+                final BaseClientMonitor stopClient = mUserSwitchProvider.getStopUserClient(currentUserId);
+                if (stopClient == null) {
+                    Slog.e(TAG, "Cannot stop user operation. Stop client is null.");
+                    return;
+                }
 
-                Slog.d(TAG, "[Stopping User] current: " + currentUserId
-                        + ", next: " + nextUserId + ". " + mStopUserClient);
+                final UserSwitchClientCallback finishedCallback = new UserSwitchClientCallback(stopClient);
+
+                Slog.d(TAG, "[Stopping User] current: " + currentUserId + ", next: " + nextUserId + ". " + stopClient);
                 mCurrentOperation = new BiometricSchedulerOperation(
-                        mStopUserClient, finishedCallback, STATE_STARTED);
-                mStopUserClient.start(finishedCallback);
+                        stopClient, finishedCallback, STATE_STARTED);
+                stopClient.start(finishedCallback);
             }
         } else {
-            Slog.e(TAG, "Cannot start next operation.");
+            Slog.e(TAG, "Cannot start next operation. mUserSwitchProvider is null.");
         }
     }
 
     protected void startNextOperationIfIdle() {
         if (mCurrentOperation != null) {
-            Slog.v(TAG, "Not idle, current operation: " + mCurrentOperation);
-            return;
+            if (mCancel && !mCurrentOperation.isFinished()) {
+                Slog.v(TAG, "Not idle, cancelling current operation: " + mCurrentOperation);
+                mCurrentOperation.cancel(mHandler, mInternalCallback);
+            } else {
+                Slog.v(TAG, "Not idle, current operation: " + mCurrentOperation);
+                return;
+            }
         }
         if (mPendingOperations.isEmpty()) {
             Slog.d(TAG, "No operations, returning to idle");

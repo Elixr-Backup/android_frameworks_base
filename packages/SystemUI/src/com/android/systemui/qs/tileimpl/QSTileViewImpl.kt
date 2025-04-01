@@ -123,7 +123,7 @@ constructor(
 
     private val colorActive = Utils.getColorAttrDefaultColor(context, R.attr.shadeActive)
     private val colorInactive = Utils.getColorAttrDefaultColor(context, R.attr.shadeInactive)
-    private val colorUnavailable = Utils.getColorAttrDefaultColor(context, R.attr.shadeDisabled)
+    private val colorUnavailable = Utils.applyAlpha(UNAVAILABLE_ALPHA, colorInactive)
 
     private val overlayColorActive =
         Utils.applyAlpha(
@@ -791,7 +791,7 @@ constructor(
             initializeLongPressProperties(measuredHeight, measuredWidth)
         } else {
             // Long-press effects might have been enabled before but the new state does not
-            // handle a long-press. In this case, we go back to the behaviour of a regular tile
+            // handle a long-press. In this case, we go back to the behavior of a regular tile
             // and clean-up the resources
             showRippleEffect = isClickable
             initialLongPressProperties = null

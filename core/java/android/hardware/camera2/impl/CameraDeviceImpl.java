@@ -124,6 +124,8 @@ public class CameraDeviceImpl extends CameraDevice
     @EnabledSince(targetSdkVersion = Build.VERSION_CODES.VANILLA_ICE_CREAM)
     static final long CHECK_PARAMS_IN_IS_SESSION_CONFIGURATION_SUPPORTED = 320741775;
 
+    private int customOpMode = 0;
+
     // TODO: guard every function with if (!mRemoteDevice) check (if it was closed)
     private ICameraDeviceUserWrapper mRemoteDevice;
     private boolean mRemoteDeviceInit = false;
@@ -175,6 +177,8 @@ public class CameraDeviceImpl extends CameraDevice
     private final CameraManager mCameraManager;
     private final int mTotalPartialCount;
     private final Context mContext;
+
+    private final boolean mForceMultiResolution;
 
     private static final long NANO_PER_SECOND = 1000000000; //ns
 
@@ -454,6 +458,9 @@ public class CameraDeviceImpl extends CameraDevice
             mTotalPartialCount = partialCount;
         }
         mIsPrivilegedApp = checkPrivilegedAppList();
+
+        mForceMultiResolution = mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_forceMultiResolution);
     }
 
     private Map<String, CameraCharacteristics> getPhysicalIdToChars() {
@@ -564,6 +571,10 @@ public class CameraDeviceImpl extends CameraDevice
         }
     }
 
+    public void setVendorStreamConfigMode(int fpsrange) {
+        customOpMode = fpsrange;
+    }
+
     @Override
     public String getId() {
         return mCameraId;
@@ -617,7 +628,11 @@ public class CameraDeviceImpl extends CameraDevice
                     "any output streams");
         }
 
-        checkInputConfiguration(inputConfig);
+        try {
+            checkInputConfiguration(inputConfig);
+        } catch (IllegalArgumentException e) {
+            Log.w(TAG, "Check input configuration failed due to: " + e.getMessage());
+        }
 
         boolean success = false;
 
@@ -686,6 +701,7 @@ public class CameraDeviceImpl extends CameraDevice
                         mConfiguredOutputs.put(streamId, outConfig);
                     }
                 }
+                operatingMode = (operatingMode | (customOpMode << 16));
 
                 int offlineStreamIds[];
                 if (sessionParams != null) {
@@ -1802,7 +1818,7 @@ public class CameraDeviceImpl extends CameraDevice
             return;
         }
         int inputFormat = inputConfig.getFormat();
-        if (inputConfig.isMultiResolution()) {
+        if (inputConfig.isMultiResolution() || mForceMultiResolution) {
             MultiResolutionStreamConfigurationMap configMap = mCharacteristics.get(
                     CameraCharacteristics.SCALER_MULTI_RESOLUTION_STREAM_CONFIGURATION_MAP);
 

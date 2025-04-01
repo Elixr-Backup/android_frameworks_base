@@ -2534,6 +2534,7 @@ easier.
 
         <!-- Text styles -->
         <item name="textAppearanceButton">@style/TextAppearance.DeviceDefault.Widget.Button</item>
+        <item name="textAppearanceMedium">@style/TextAppearance.DeviceDefault.Medium</item>
 
         <!-- Button styles -->
         <item name="buttonCornerRadius">@dimen/config_buttonCornerRadius</item>
@@ -5214,6 +5215,7 @@ easier.
 
         <!-- Text styles -->
         <item name="textAppearanceButton">@style/TextAppearance.DeviceDefault.Widget.Button</item>
+        <item name="textAppearanceMedium">@style/TextAppearance.DeviceDefault.Medium</item>
 
         <!-- Button styles -->
         <item name="buttonCornerRadius">@dimen/config_buttonCornerRadius</item>
@@ -5614,8 +5616,8 @@ easier.
         <item name="colorEdgeEffect">@color/edge_effect_device_default_light</item>
 
         <!-- Add white nav bar with divider that matches material -->
-        <item name="navigationBarDividerColor">@color/navigation_bar_divider_device_default_settings</item>
-        <item name="navigationBarColor">@android:color/white</item>
+        <item name="navigationBarDividerColor">@null</item>
+        <item name="navigationBarColor">?attr/colorBackground</item>
         <item name="windowLightNavigationBar">true</item>
 
         <!-- Dialog attributes -->

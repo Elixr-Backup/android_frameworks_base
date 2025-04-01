@@ -118,6 +118,7 @@ import com.android.internal.policy.IKeyguardExitCallback;
 import com.android.internal.policy.IKeyguardStateCallback;
 import com.android.internal.policy.ScreenDecorationsUtils;
 import com.android.internal.statusbar.IStatusBarService;
+import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.LatencyTracker;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardConstants;
@@ -485,6 +486,7 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
     private boolean mHideAnimationRunning = false;
     private boolean mIsKeyguardExitAnimationCanceled = false;
 
+    private long mLastTimeSoundWasPlayed = 0;
     private SoundPool mLockSounds;
     private int mLockSoundId;
     private int mUnlockSoundId;
@@ -1762,7 +1764,11 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         // explicitly DO NOT want to call
         // mKeyguardViewControllerLazy.get().setKeyguardGoingAwayState(false)
         // here, since that will mess with the device lock state.
-        mUpdateMonitor.dispatchKeyguardGoingAway(false);
+        int[] udfpsProps = mContext.getResources().getIntArray(
+                com.android.internal.R.array.config_udfps_sensor_props);
+        if (ArrayUtils.isEmpty(udfpsProps)) {
+            mUpdateMonitor.dispatchKeyguardGoingAway(false);
+        }
 
         notifyStartedGoingToSleep();
     }
@@ -2839,6 +2845,8 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
         int lockscreenSoundsEnabled = mSystemSettings.getIntForUser(LOCKSCREEN_SOUNDS_ENABLED, 1,
                 mSelectedUserInteractor.getSelectedUserId());
         if (lockscreenSoundsEnabled == 1) {
+            if (mSystemClock.elapsedRealtime() - mLastTimeSoundWasPlayed < 300) return;
+            mLastTimeSoundWasPlayed = mSystemClock.elapsedRealtime();
 
             mLockSounds.stop(mLockSoundStreamId);
             // Init mAudioManager
@@ -3091,13 +3099,6 @@ public class KeyguardViewMediator implements CoreStartable, Dumpable,
      */
     private void handleHide() {
         Trace.beginSection("KeyguardViewMediator#handleHide");
-
-        // It's possible that the device was unlocked (via BOUNCER) while dozing. It's time to
-        // wake up.
-        if (mAodShowing) {
-            mPM.wakeUp(mSystemClock.uptimeMillis(), PowerManager.WAKE_REASON_GESTURE,
-                    "com.android.systemui:BOUNCER_DOZING");
-        }
 
         synchronized (KeyguardViewMediator.this) {
             if (DEBUG) Log.d(TAG, "handleHide");

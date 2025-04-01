@@ -1124,7 +1124,7 @@ public final class SystemServiceRegistry {
                 new StaticServiceFetcher<OemLockManager>() {
             @Override
             public OemLockManager createService() throws ServiceNotFoundException {
-                IBinder b = ServiceManager.getServiceOrThrow(Context.OEM_LOCK_SERVICE);
+                IBinder b = ServiceManager.getService(Context.OEM_LOCK_SERVICE);
                 IOemLockService oemLockService = IOemLockService.Stub.asInterface(b);
                 if (oemLockService != null) {
                     return new OemLockManager(oemLockService);
@@ -1747,6 +1747,18 @@ public final class SystemServiceRegistry {
                                 Context.SUPERVISION_SERVICE);
                         ISupervisionManager service = ISupervisionManager.Stub.asInterface(iBinder);
                         return new SupervisionManager(ctx, service);
+                    }
+                });
+
+        registerService(Context.APP_LOCK_SERVICE, AppLockManager.class,
+                new CachedServiceFetcher<AppLockManager>() {
+                    @Override
+                    public AppLockManager createService(ContextImpl ctx)
+                            throws ServiceNotFoundException {
+                        IBinder binder = ServiceManager.getServiceOrThrow(
+                                Context.APP_LOCK_SERVICE);
+                        return new AppLockManager(ctx,
+                            IAppLockManagerService.Stub.asInterface(binder));
                     }
                 });
         if (android.security.Flags.aapmApi()) {

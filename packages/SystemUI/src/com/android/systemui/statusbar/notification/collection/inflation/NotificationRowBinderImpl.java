@@ -141,7 +141,7 @@ public class NotificationRowBinderImpl implements NotificationRowBinder {
 
         if (entry.rowExists()) {
             mLogger.logUpdatingRow(entry, params);
-            mIconManager.updateIcons(entry, /* usingCache = */ false);
+            mIconManager.updateIcons(entry, /* usingCache = */ false, /* forceUpdate = */ false);
             ExpandableNotificationRow row = entry.getRow();
             row.reset();
             updateRow(entry, row);
@@ -258,7 +258,8 @@ public class NotificationRowBinderImpl implements NotificationRowBinder {
         params.setUseMinimized(isMinimized);
         boolean needsRedaction = screenshareNotificationHiding()
                 ? inflaterParams.getNeedsRedaction()
-                : mNotificationLockscreenUserManager.needsRedaction(entry);
+                : mNotificationLockscreenUserManager.needsRedaction(entry)
+                || entry.getSbn().getIsContentSecure();
 
         if (needsRedaction) {
             params.requireContentViews(FLAG_CONTENT_VIEW_PUBLIC);

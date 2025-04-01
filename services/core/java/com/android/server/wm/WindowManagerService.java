@@ -790,6 +790,9 @@ public class WindowManagerService extends IWindowManager.Stub
     WindowManagerInternal.OnHardKeyboardStatusChangeListener mHardKeyboardStatusChangeListener;
     WindowManagerInternal.OnImeRequestedChangedListener mOnImeRequestedChangedListener;
 
+    private ArraySet<WindowManagerInternal.DisplaySecureContentListener>
+            mDisplaySecureContentListeners = new ArraySet<>();
+
     SettingsObserver mSettingsObserver;
     final EmbeddedWindowController mEmbeddedWindowController;
     final AnrController mAnrController;
@@ -846,8 +849,14 @@ public class WindowManagerService extends IWindowManager.Stub
         public SettingsObserver() {
             super(new Handler());
             ContentResolver resolver = mContext.getContentResolver();
-            resolver.registerContentObserver(mDisplayInversionEnabledUri, false, this,
-                    UserHandle.USER_ALL);
+
+            final boolean displayInversionAvailable = mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_displayInversionAvailable);
+            if (displayInversionAvailable) {
+                resolver.registerContentObserver(mDisplayInversionEnabledUri, false, this,
+                        UserHandle.USER_ALL);
+            }
+
             resolver.registerContentObserver(mWindowAnimationScaleUri, false, this,
                     UserHandle.USER_ALL);
             resolver.registerContentObserver(mTransitionAnimationScaleUri, false, this,
@@ -5430,6 +5439,15 @@ public class WindowManagerService extends IWindowManager.Stub
         }
     }
 
+    void notifyDisplaySecureContentChange(int displayId, boolean hasSecureWindowOnScreen) {
+        synchronized (mGlobalLock) {
+            mDisplaySecureContentListeners.forEach((listener) -> {
+                listener.onDisplayHasSecureWindowOnScreenChanged(
+                        displayId, hasSecureWindowOnScreen);
+            });
+        }
+    }
+
     // -------------------------------------------------------------
     // Input Events and Focus Management
     // -------------------------------------------------------------
@@ -8865,6 +8883,20 @@ public class WindowManagerService extends IWindowManager.Stub
             // WMS.takeAssistScreenshot takes care of the locking.
             return WindowManagerService.this.takeAssistScreenshot(windowTypesToExclude);
         }
+
+        @Override
+        public void registerDisplaySecureContentListener(DisplaySecureContentListener listener) {
+            synchronized (mGlobalLock) {
+                mDisplaySecureContentListeners.add(listener);
+            }
+        }
+
+        @Override
+        public void unregisterDisplaySecureContentListener(DisplaySecureContentListener listener) {
+            synchronized (mGlobalLock) {
+                mDisplaySecureContentListeners.remove(listener);
+            }
+        }
     }
 
     private final class ImeTargetVisibilityPolicyImpl extends ImeTargetVisibilityPolicy {
@@ -10270,7 +10302,6 @@ public class WindowManagerService extends IWindowManager.Stub
         mSurfaceSyncGroupController.markSyncGroupReady(syncGroupToken);
     }
 
-
     /**
      * Must be called when a screenshot is taken via hardware chord.
      *
@@ -10284,7 +10315,9 @@ public class WindowManagerService extends IWindowManager.Stub
                 "notifyScreenshotListeners()")) {
             throw new SecurityException("Requires STATUS_BAR_SERVICE permission");
         }
+
         synchronized (mGlobalLock) {
+            if (shouldHideScreenCapture()) return new ArrayList<>();
             final DisplayContent displayContent = mRoot.getDisplayContent(displayId);
             if (displayContent == null) {
                 return new ArrayList<>();
@@ -10386,6 +10419,10 @@ public class WindowManagerService extends IWindowManager.Stub
     @EnforcePermission(android.Manifest.permission.DETECT_SCREEN_RECORDING)
     @Override
     public boolean registerScreenRecordingCallback(IScreenRecordingCallback callback) {
+        if (shouldHideScreenCapture()) {
+            return false;
+        }
+
         registerScreenRecordingCallback_enforcePermission();
         return mScreenRecordingCallbackController.register(callback);
     }
@@ -10398,6 +10435,10 @@ public class WindowManagerService extends IWindowManager.Stub
     }
 
     void onProcessActivityVisibilityChanged(int uid, boolean visible) {
+        if (shouldHideScreenCapture()) {
+            return;
+        }
+
         mScreenRecordingCallbackController.onProcessActivityVisibilityChanged(uid, visible);
     }
 
@@ -10490,5 +10531,10 @@ public class WindowManagerService extends IWindowManager.Stub
                 pw.println("Got a RemoteException while dumping the window");
             }
         });
+    }
+
+    private boolean shouldHideScreenCapture() {
+        return Settings.Global.getInt(mContext.getContentResolver(),
+                Settings.Global.HIDE_SCREEN_CAPTURE_STATUS, 0) != 0;
     }
 }

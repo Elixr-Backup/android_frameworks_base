@@ -36,12 +36,15 @@ import android.media.AudioManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.nfc.NfcAdapter;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.UserManager;
+import com.android.systemui.tuner.TunerService;
+import android.provider.Settings;
 import android.provider.Settings.Global;
 import android.service.notification.ZenModeConfig;
 import android.telecom.TelecomManager;
@@ -115,11 +118,15 @@ public class PhoneStatusBarPolicy
                 KeyguardStateController.Callback,
                 PrivacyItemController.Callback,
                 LocationController.LocationChangeCallback,
-                RecordingController.RecordingStateChangeCallback {
+                RecordingController.RecordingStateChangeCallback,
+                TunerService.Tunable {
     private static final String TAG = "PhoneStatusBarPolicy";
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
 
     static final int LOCATION_STATUS_ICON_ID = PrivacyType.TYPE_LOCATION.getIconId();
+ 
+    private static final String NETWORK_TRAFFIC_ENABLED =
+            "system:" + Settings.System.NETWORK_TRAFFIC_ENABLED;
 
     private final String mSlotCast;
     private final String mSlotHotspot;
@@ -140,6 +147,8 @@ public class PhoneStatusBarPolicy
     private final String mSlotScreenRecord;
     private final String mSlotConnectedDisplay;
     private final String mSlotFirewall;
+    private final String mSlotNfc;
+    private final String mSlotNetworkTraffic;
     private final int mDisplayId;
     private final SharedPreferences mSharedPreferences;
     private final DateFormatUtil mDateFormatUtil;
@@ -190,6 +199,10 @@ public class PhoneStatusBarPolicy
     private BluetoothController mBluetooth;
     private AlarmClockInfo mNextAlarm;
 
+    private NfcAdapter mAdapter;
+    private TunerService mTunerService;
+    private boolean mShowNetworkTraffic;
+
     @Inject
     public PhoneStatusBarPolicy(Context context, StatusBarIconController iconController,
             CommandQueue commandQueue, BroadcastDispatcher broadcastDispatcher,
@@ -212,7 +225,8 @@ public class PhoneStatusBarPolicy
             PrivacyLogger privacyLogger,
             ConnectedDisplayInteractor connectedDisplayInteractor,
             ZenModeInteractor zenModeInteractor,
-            JavaAdapter javaAdapter
+            JavaAdapter javaAdapter,
+            TunerService tunerService
     ) {
         mContext = context;
         mIconController = iconController;
@@ -270,10 +284,15 @@ public class PhoneStatusBarPolicy
         mSlotScreenRecord = resources.getString(
                 com.android.internal.R.string.status_bar_screen_record);
         mSlotFirewall = resources.getString(R.string.status_bar_firewall_slot);
+        mSlotNfc = resources.getString(com.android.internal.R.string.status_bar_nfc);
+        mSlotNetworkTraffic = resources.getString(com.android.internal.R.string.status_bar_network_traffic);
+        mCurrentUserSetup = mProvisionedController.isDeviceProvisioned();
 
         mDisplayId = displayId;
         mSharedPreferences = sharedPreferences;
         mDateFormatUtil = dateFormatUtil;
+	
+        mTunerService = tunerService;    
     }
 
     /** Initialize the object after construction. */
@@ -289,6 +308,7 @@ public class PhoneStatusBarPolicy
         filter.addAction(Intent.ACTION_PROFILE_REMOVED);
         filter.addAction(Intent.ACTION_PROFILE_ACCESSIBLE);
         filter.addAction(Intent.ACTION_PROFILE_INACCESSIBLE);
+        filter.addAction(NfcAdapter.ACTION_ADAPTER_STATE_CHANGED);
         mBroadcastDispatcher.registerReceiverWithHandler(mIntentReceiver, filter, mHandler);
         Observer<Integer> observer = ringer -> mHandler.post(this::updateVolumeZen);
 
@@ -378,6 +398,17 @@ public class PhoneStatusBarPolicy
         mIconController.setIcon(mSlotFirewall, R.drawable.stat_sys_firewall, null);
         mIconController.setIconVisibility(mSlotFirewall, mFirewallVisible);
 
+        mIconController.setIcon(mSlotNfc, R.drawable.stat_sys_nfc,
+                mResources.getString(R.string.status_bar_nfc));
+
+        mIconController.setIconVisibility(mSlotNfc, false);
+        updateNfc();
+
+        // network traffic
+        mShowNetworkTraffic = Settings.System.getIntForUser(mContext.getContentResolver(),
+            NETWORK_TRAFFIC_ENABLED, 0, UserHandle.USER_CURRENT) == 1;
+        updateNetworkTraffic();
+
         mRotationLockController.addCallback(this);
         mBluetooth.addCallback(this);
         mProvisionedController.addCallback(this);
@@ -410,6 +441,8 @@ public class PhoneStatusBarPolicy
                 this::onConnectedDisplayAvailabilityChanged);
 
         mCommandQueue.addCallback(this);
+
+        mTunerService.addTunable(this, NETWORK_TRAFFIC_ENABLED);
 
         // Get initial user setup state
         onUserSetupChanged();
@@ -459,6 +492,19 @@ public class PhoneStatusBarPolicy
                 }
             };
 
+    @Override
+    public void onTuningChanged(String key, String newValue) {
+        switch (key) {
+            case NETWORK_TRAFFIC_ENABLED:
+                mShowNetworkTraffic =
+                        TunerService.parseIntegerSwitch(newValue, false);
+                updateNetworkTraffic();
+                break;
+            default:
+                break;
+        }
+    }	
+
     private void updateAlarm() {
         final AlarmClockInfo alarm = mAlarmManager.getNextAlarmClock(mUserTracker.getUserId());
         final boolean hasAlarm = alarm != null && alarm.getTriggerTime() > 0;
@@ -479,6 +525,17 @@ public class PhoneStatusBarPolicy
         String dateString = DateFormat.format(pattern, mNextAlarm.getTriggerTime()).toString();
 
         return mResources.getString(R.string.accessibility_quick_settings_alarm, dateString);
+    }
+
+    private NfcAdapter getAdapter() {
+        if (mAdapter == null) {
+            mAdapter = NfcAdapter.getDefaultAdapter(mContext);
+        }
+        return mAdapter;
+    }
+
+    private final void updateNfc() {
+        mIconController.setIconVisibility(mSlotNfc, getAdapter() != null && getAdapter().isEnabled());
     }
 
     private void updateVolumeZen() {
@@ -573,25 +630,27 @@ public class PhoneStatusBarPolicy
                     || !mBluetooth.isBluetoothAudioProfileOnly())) {
                 int batteryLevel = mBluetooth.getBatteryLevel();
                 if (batteryLevel == 100) {
-                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_9;
+                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_10;
                 } else if (batteryLevel >= 90) {
-                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_8;
+                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_9;
                 } else if (batteryLevel >= 80) {
-                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_7;
+                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_8;
                 } else if (batteryLevel >= 70) {
-                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_6;
+                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_7;
                 } else if (batteryLevel >= 60) {
-                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_5;
+                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_6;
                 } else if (batteryLevel >= 50) {
-                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_4;
+                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_5;
                 } else if (batteryLevel >= 40) {
-                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_3;
+                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_4;
                 } else if (batteryLevel >= 30) {
-                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_2;
+                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_3;
                 } else if (batteryLevel >= 20) {
-                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_1;
+                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_2;
                 } else if (batteryLevel >= 10) {
-                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_0;
+                    iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_1;
+                } else if (batteryLevel >= 0) { 
+		   iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_0;
                 }
                 contentDescription = mResources.getString(
                         R.string.accessibility_bluetooth_connected);
@@ -601,6 +660,11 @@ public class PhoneStatusBarPolicy
 
         mIconController.setIcon(mSlotBluetooth, iconId, contentDescription);
         mIconController.setIconVisibility(mSlotBluetooth, bluetoothVisible);
+    }
+
+    private final void updateNetworkTraffic() {
+        mIconController.setNetworkTraffic(mSlotNetworkTraffic, new NetworkTrafficState(mShowNetworkTraffic));
+        mIconController.setIconVisibility(mSlotNetworkTraffic, mShowNetworkTraffic);
     }
 
     private final void updateTTY() {
@@ -978,6 +1042,9 @@ public class PhoneStatusBarPolicy
                 case AudioManager.ACTION_HEADSET_PLUG:
                     updateHeadsetPlug(intent);
                     break;
+                case NfcAdapter.ACTION_ADAPTER_STATE_CHANGED:
+                    updateNfc();
+                    break;
             }
         }
     };
@@ -1069,5 +1136,18 @@ public class PhoneStatusBarPolicy
         }
 
         mIconController.setIconVisibility(mSlotConnectedDisplay, visible);
+    }
+
+    public static class NetworkTrafficState {
+        public boolean visible;
+
+        public NetworkTrafficState(boolean visible) {
+            this.visible = visible;
+        }
+
+        @Override
+        public String toString() {
+            return "NetworkTrafficState(visible=" + visible + ")";
+        }
     }
 }

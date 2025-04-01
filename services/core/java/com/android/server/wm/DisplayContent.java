@@ -100,6 +100,7 @@ import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_SCREEN_ON;
 import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_WALLPAPER;
 import static com.android.internal.protolog.WmProtoLogGroups.WM_SHOW_TRANSACTIONS;
 import static com.android.internal.util.LatencyTracker.ACTION_ROTATE_SCREEN;
+import static com.android.server.display.LMOFreeformDisplayAdapter.UNIQUE_ID_PREFIX;
 import static com.android.server.policy.WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM;
 import static com.android.server.policy.WindowManagerPolicy.FINISH_LAYOUT_REDO_CONFIG;
 import static com.android.server.policy.WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT;
@@ -546,6 +547,8 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
     // TODO(multi-display): remove some of the usages.
     boolean isDefaultDisplay;
 
+    private boolean isFreeformDisplay;
+
     /** Save allocating when calculating rects */
     private final Rect mTmpRect = new Rect();
     private final Region mTmpRegion = new Region();
@@ -791,6 +794,8 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
     /** Last window to hold the screen locked. */
     private WindowState mLastWakeLockHoldingWindow;
 
+    private boolean mHasSecureContent;
+
     /**
      * Whether display is allowed to ignore all activity size restrictions.
      * @see #isDisplayIgnoreActivitySizeRestrictions
@@ -841,11 +846,12 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
      */
     private final ToBooleanFunction<WindowState> mFindFocusedWindow = w -> {
         final ActivityRecord focusedApp = mFocusedApp;
+        final boolean canReceiveKeys = w.canReceiveKeys();
         ProtoLog.v(WM_DEBUG_FOCUS, "Looking for focus: %s, flags=%d, canReceive=%b, reason=%s",
-                w, w.mAttrs.flags, w.canReceiveKeys(),
+                w, w.mAttrs.flags, canReceiveKeys,
                 w.canReceiveKeysReason(false /* fromUserTouch */));
 
-        if (!w.canReceiveKeys()) {
+        if (!canReceiveKeys) {
             return false;
         }
 
@@ -1145,6 +1151,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         mSystemGestureExclusionLimit = mWmService.mConstants.mSystemGestureExclusionLimitDp
                 * mDisplayMetrics.densityDpi / DENSITY_DEFAULT;
         isDefaultDisplay = mDisplayId == DEFAULT_DISPLAY;
+        isFreeformDisplay = mDisplayInfo.uniqueId.startsWith(UNIQUE_ID_PREFIX);
         mInsetsStateController = new InsetsStateController(this);
         initializeDisplayBaseInfo();
         mDisplayFrames = new DisplayFrames(mInsetsStateController.getRawInsetsState(),
@@ -5191,6 +5198,13 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         if (updateInputWindows) {
             mInputMonitor.updateInputWindowsLw(false /*force*/);
         }
+
+        // Notify if display added or removed a secure window
+        final boolean hasSecureContent = hasSecureWindowOnScreen();
+        if (hasSecureContent != mHasSecureContent) {
+            mHasSecureContent = hasSecureContent;
+            mWmService.notifyDisplaySecureContentChange(mDisplayId, hasSecureContent);
+        }
     }
 
     /**
@@ -5807,7 +5821,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
      * also check {@link #isSystemDecorationsSupported()} to avoid breaking any security policy.
      */
     boolean isPublicSecondaryDisplayWithDesktopModeForceEnabled() {
-        if (!mWmService.mForceDesktopModeOnExternalDisplays || isDefaultDisplay || isPrivate()) {
+        if (!mWmService.mForceDesktopModeOnExternalDisplays || isDefaultDisplay || isPrivate() && !isFreeformDisplay) {
             return false;
         }
         // Desktop mode is not supported on virtual devices.

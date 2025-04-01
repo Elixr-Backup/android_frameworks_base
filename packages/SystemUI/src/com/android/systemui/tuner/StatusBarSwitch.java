@@ -18,10 +18,13 @@ package com.android.systemui.tuner;
 import android.app.ActivityManager;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.res.TypedArray;
+import android.graphics.drawable.Drawable;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 
+import androidx.core.graphics.drawable.DrawableCompat;
 import androidx.preference.SwitchPreferenceCompat;
 
 import com.android.internal.logging.MetricsLogger;
@@ -37,13 +40,14 @@ public class StatusBarSwitch extends SwitchPreferenceCompat implements Tunable {
     private Set<String> mHideList;
 
     public StatusBarSwitch(Context context, AttributeSet attrs) {
-        super(context, attrs);
+        super(context, attrs, androidx.preference.R.attr.switchPreferenceCompatStyle);
     }
 
     @Override
     public void onAttached() {
         super.onAttached();
         Dependency.get(TunerService.class).addTunable(this, StatusBarIconController.ICON_HIDE_LIST);
+        setupTheme();
     }
 
     @Override
@@ -78,6 +82,18 @@ public class StatusBarSwitch extends SwitchPreferenceCompat implements Tunable {
             }
         }
         return true;
+    }
+    
+    private void setupTheme() {
+        Drawable icon = getIcon();
+        if (icon != null) {
+            TypedArray a = getContext().obtainStyledAttributes(new int[]{android.R.attr.textColorPrimary});
+            int color = a.getColor(0, 0);
+            a.recycle();
+            Drawable wrappedIcon = DrawableCompat.wrap(icon);
+            DrawableCompat.setTint(wrappedIcon, color);
+            setIcon(wrappedIcon);
+        }
     }
 
     private void setList(Set<String> hideList) {
